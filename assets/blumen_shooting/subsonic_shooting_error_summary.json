@@ -1,0 +1,9 @@
+{
+  "global_mae_omega": 0.0026344576948181533,
+  "global_median_distance": 0.0034230474642285456,
+  "notes": [
+    "mae_omega mesure l'ecart entre omega_i du solveur et le niveau Blumen aux points digitalises.",
+    "median_distance mesure la distance geometrique point -> isoligne du solveur du meme niveau dans le plan (M, alpha).",
+    "Ces metriques sont plus robustes qu'un appariement exact point a point et tolerent le bruit de digitalisation manuelle."
+  ]
+}
