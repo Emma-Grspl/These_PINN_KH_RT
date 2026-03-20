@@ -1,5 +1,21 @@
 from __future__ import annotations
 
+"""
+Solveur de tir subsonique pour la stabilité d'une couche de mélange compressible.
+
+Idée générale :
+1. On se place dans le régime subsonique et on impose la branche principale c = i c_i
+   (donc c_r = 0).
+2. On reformule l'équation de pression de Blumen avec la variable de Riccati
+   gamma = p'/p.
+3. Pour une valeur test de c_i, on intègre l'ODE de Riccati depuis y = -L et y = +L
+   jusqu'au point de raccord y = 0.
+4. La bonne valeur propre est celle pour laquelle les deux tirs se raccordent le mieux,
+   c'est-à-dire celle qui minimise |gamma_left(0) - gamma_right(0)|.
+5. Une fois c_i trouvé, on en déduit le taux de croissance temporel
+   omega_i = alpha * c_i.
+"""
+
 from dataclasses import dataclass
 
 import numpy as np
@@ -9,6 +25,13 @@ from scipy.optimize import minimize_scalar
 
 
 def _principal_sqrt(z: complex) -> complex:
+    """
+    Racine carrée complexe choisie avec une convention de signe cohérente.
+
+    On force ici la racine à avoir une partie réelle positive (ou nulle avec partie
+    imaginaire positive) afin de sélectionner systématiquement la branche associée
+    à une décroissance spatiale physique dans le far field.
+    """
     root = np.sqrt(z)
     if root.real < 0 or (np.isclose(root.real, 0.0, atol=1e-12) and root.imag < 0):
         root = -root
@@ -17,6 +40,7 @@ def _principal_sqrt(z: complex) -> complex:
 
 @dataclass
 class ShootingResult:
+    """Conteneur léger pour exposer le résultat final du solveur."""
     alpha: float
     Mach: float
     ci: float
@@ -54,26 +78,41 @@ class SubsonicShootingSolver:
         self.min_domain_size = min_domain_size
         self.max_domain_size = max_domain_size
         self.match_point = match_point
+        # Valeur plancher pour éviter de travailler exactement à c_i = 0 dans les
+        # routines numériques internes.
         self.ci_floor = 1e-5
 
     @staticmethod
     def base_velocity(y: float | np.ndarray) -> float | np.ndarray:
+        """Profil de base U(y) = tanh(y)."""
         return np.tanh(y)
 
     @staticmethod
     def base_velocity_derivative(y: float | np.ndarray) -> float | np.ndarray:
+        """Dérivée du profil de base U'(y)."""
         return 1.0 / np.cosh(y) ** 2
 
     def phase_speed(self, ci: float) -> complex:
+        """Construit la vitesse de phase complexe c = i c_i propre au subsonique."""
         return 1j * float(max(ci, self.ci_floor))
 
     def stability_limit(self) -> float:
+        """Frontière neutre théorique alpha_c(M) = sqrt(1 - M^2)."""
         return np.sqrt(max(0.0, 1.0 - self.Mach**2))
 
     def is_stable_region(self) -> bool:
+        """Teste si le couple (alpha, M) se situe dans la zone théoriquement stable."""
         return self.alpha >= self.stability_limit() - 1e-12
 
     def asymptotic_decay_rates(self, ci: float) -> tuple[complex, complex]:
+        """
+        Calcule les taux asymptotiques gamma_left et gamma_right dans le far field.
+
+        Loin de la couche de mélange, U(y) tend vers +/-1 et la solution se comporte
+        comme une exponentielle. Ces quantités servent à :
+        - imposer des conditions initiales physiques aux deux extrémités ;
+        - estimer une taille de domaine L raisonnable.
+        """
         c = self.phase_speed(ci)
         z_minus = 1.0 - self.Mach**2 * (c + 1.0) ** 2
         z_plus = 1.0 - self.Mach**2 * (c - 1.0) ** 2
@@ -86,6 +125,12 @@ class SubsonicShootingSolver:
         return gamma_left, gamma_right
 
     def estimate_domain_size(self, ci: float) -> float:
+        """
+        Estime la demi-largeur du domaine [-L, L] à partir des taux de décroissance.
+
+        Plus la solution décroît lentement, plus il faut un grand domaine pour bien
+        capturer le comportement asymptotique avant le point de raccord.
+        """
         gamma_left, gamma_right = self.asymptotic_decay_rates(ci)
         decay_left = max(gamma_left.real, 1e-6)
         decay_right = max(-gamma_right.real, 1e-6)
@@ -93,6 +138,11 @@ class SubsonicShootingSolver:
         return float(np.clip(estimate, self.min_domain_size, self.max_domain_size))
 
     def riccati_rhs(self, y: float, gamma: np.ndarray, ci: float) -> np.ndarray:
+        """
+        Membre de droite de l'équation de Riccati :
+            gamma' = -gamma^2 - P(y) gamma + alpha^2 R(y)
+        avec gamma = p'/p.
+        """
         c = self.phase_speed(ci)
         u = self.base_velocity(y)
         up = self.base_velocity_derivative(y)
@@ -102,6 +152,14 @@ class SubsonicShootingSolver:
         return np.array([-gamma[0] ** 2 - p_term * gamma[0] + self.alpha**2 * r_term], dtype=complex)
 
     def integrate_gamma(self, ci: float, domain_size: float | None = None) -> tuple[complex, complex, float, bool]:
+        """
+        Effectue les deux tirs :
+        - un depuis y = -L jusqu'au point de raccord ;
+        - un depuis y = +L jusqu'au point de raccord.
+
+        On renvoie les deux valeurs finales gamma_left(match_point) et
+        gamma_right(match_point), qui seront comparées dans la fonction de mismatch.
+        """
         domain_size = self.estimate_domain_size(ci) if domain_size is None else float(domain_size)
         gamma_left_0, gamma_right_0 = self.asymptotic_decay_rates(ci)
 
@@ -131,6 +189,12 @@ class SubsonicShootingSolver:
         return left_solution.y[0, -1], right_solution.y[0, -1], domain_size, True
 
     def mismatch(self, ci: float) -> float:
+        """
+        Fonction objectif du solveur.
+
+        Pour une valeur test de c_i, on mesure l'écart entre les deux tirs au point
+        de raccord. La bonne valeur propre minimise cette quantité.
+        """
         if ci < 0.0:
             return 1e6
         gamma_left, gamma_right, _, success = self.integrate_gamma(max(ci, self.ci_floor))
@@ -145,6 +209,17 @@ class SubsonicShootingSolver:
         n_scan: int = 81,
         previous_ci: float | None = None,
     ) -> ShootingResult:
+        """
+        Résout le problème pour un couple (alpha, M) donné.
+
+        Stratégie numérique :
+        1. Si le point est au-delà de la frontière neutre, on renvoie directement
+           c_i = 0.
+        2. Sinon on réalise un scan grossier de la fonction mismatch(c_i).
+        3. On identifie un minimum local plausible, de préférence proche de la
+           solution précédente previous_ci pour suivre la même branche.
+        4. On raffine ce minimum avec scipy.optimize.minimize_scalar.
+        """
         if self.is_stable_region():
             return ShootingResult(
                 alpha=self.alpha,
@@ -159,9 +234,12 @@ class SubsonicShootingSolver:
         scan_min = self.ci_floor
         scan_max = ci_max
         if previous_ci is not None and previous_ci > 0.0:
+            # Continuation de branche : on restreint la recherche autour de la
+            # solution précédente en alpha pour éviter les sauts vers une autre branche.
             scan_min = max(self.ci_floor, previous_ci - 0.15)
             scan_max = min(ci_max, previous_ci + 0.15)
 
+        # Echantillonnage grossier de mismatch(c_i) sur l'intervalle de recherche.
         ci_values = np.linspace(scan_min, scan_max, n_scan)
         mismatches = np.array([self.mismatch(ci) for ci in ci_values])
 
@@ -173,10 +251,15 @@ class SubsonicShootingSolver:
 
         if local_minima:
             if previous_ci is not None and previous_ci > 0.0:
+                # Si l'on suit déjà une branche, on prend le minimum local le plus
+                # proche de la valeur précédente.
                 coarse_ci = min(local_minima, key=lambda item: abs(item[0] - previous_ci))[0]
             else:
+                # Sinon, on prend simplement le minimum local le plus prometteur.
                 coarse_ci = min(local_minima, key=lambda item: item[1])[0]
         else:
+            # Sécurité : s'il n'y a pas de minimum local bien formé, on retient
+            # le meilleur point du scan admissible.
             admissible_idx = np.where(ci_values > max(0.03, 3.0 * self.ci_floor))[0]
             if len(admissible_idx) == 0:
                 coarse_ci = float(ci_values[int(np.argmin(mismatches))])
@@ -184,6 +267,7 @@ class SubsonicShootingSolver:
                 best_local = admissible_idx[int(np.argmin(mismatches[admissible_idx]))]
                 coarse_ci = float(ci_values[best_local])
 
+        # Raffinement local autour du meilleur point grossier trouvé.
         delta_ci = ci_values[1] - ci_values[0]
         bracket_left = max(self.ci_floor, coarse_ci - delta_ci)
         bracket_right = min(ci_max, coarse_ci + delta_ci)
@@ -200,6 +284,7 @@ class SubsonicShootingSolver:
         domain_size = self.estimate_domain_size(max(ci_star, 1e-6))
         success = bool(optimum.success and mismatch_star < 5e-2)
 
+        # En pratique, si c_i est numériquement quasi nul, on le rabat à 0.
         if ci_star < 1e-4:
             ci_star = 0.0
 
@@ -221,12 +306,22 @@ def sample_subsonic_growth_map(
     ci_max: float = 1.0,
     n_scan: int = 81,
 ) -> pd.DataFrame:
+    """
+    Reconstruit une carte subsonique sur une grille (alpha, M).
+
+    Pour chaque Mach :
+    - on sépare d'abord la zone instable et la zone stable théorique ;
+    - on balaie les alphas instables depuis la frontière neutre vers les petits alpha ;
+    - on propage previous_ci pour faire de la continuation de branche.
+    """
     rows = []
     alphas = np.asarray(alphas, dtype=float)
     machs = np.asarray(machs, dtype=float)
 
     for mach in machs:
         alpha_cut = np.sqrt(max(0.0, 1.0 - float(mach) ** 2))
+        # On commence près de la neutralité, où l'on sait sur quelle branche on doit
+        # se trouver, puis on descend en alpha.
         unstable_alphas = np.sort(alphas[alphas < alpha_cut - 1e-12])[::-1]
         stable_alphas = np.sort(alphas[alphas >= alpha_cut - 1e-12])
         previous_ci = None

@@ -1,0 +1,7 @@
+{
+  "n_blumen_points": 15,
+  "current_vs_blumen_mae_omega": 0.002760475343314917,
+  "mstab_vs_blumen_mae_omega": 0.0027767946421077138,
+  "current_vs_mstab_mae_ci_grid": 1.313903738793254e-05,
+  "current_vs_mstab_mae_omega_grid": 4.2987976232616855e-06
+}
