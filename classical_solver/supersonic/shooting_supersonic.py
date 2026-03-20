@@ -162,6 +162,8 @@ class SupersonicShootingSolver:
         cr_max: float = 0.20,
         ci_min_search: float = 0.005,
         tracking_weight: float = 2e-2,
+        branch_floor_ratio: float = 0.6,
+        branch_floor_threshold: float = 0.03,
     ) -> SupersonicShootingResult:
         seeds = []
         if previous_guesses is not None:
@@ -175,17 +177,22 @@ class SupersonicShootingSolver:
             continuation_pool.append(previous_guess)
         if continuation_pool:
             target_guess = max(continuation_pool, key=lambda guess: guess[1])
+        ci_search_floor = ci_min_search
+        if target_guess is not None and target_guess[1] >= branch_floor_threshold:
+            # Si une branche non triviale a deja ete identifiee, on interdit au solveur
+            # de retomber trop bas en c_i lors de la continuation.
+            ci_search_floor = max(ci_min_search, branch_floor_ratio * target_guess[1])
         if anchor_guess is not None:
-            seeds.append((max(anchor_guess[0], 0.0), max(anchor_guess[1], ci_min_search)))
+            seeds.append((max(anchor_guess[0], 0.0), max(anchor_guess[1], ci_search_floor)))
         if previous_guess is not None:
-            seeds.append((max(previous_guess[0], 0.0), max(previous_guess[1], ci_min_search)))
+            seeds.append((max(previous_guess[0], 0.0), max(previous_guess[1], ci_search_floor)))
         seeds.extend(
             [
-                (0.00, max(ci_min_search, 0.02)),
-                (0.02, 0.02),
-                (0.04, 0.03),
-                (0.06, 0.05),
-                (0.08, 0.08),
+                (0.00, max(ci_search_floor, 0.02)),
+                (0.02, max(ci_search_floor, 0.02)),
+                (0.04, max(ci_search_floor, 0.03)),
+                (0.06, max(ci_search_floor, 0.05)),
+                (0.08, max(ci_search_floor, 0.08)),
             ]
         )
 
@@ -198,26 +205,26 @@ class SupersonicShootingSolver:
             seed_cr, seed_ci = neighbor
             for delta_cr in (-0.03, 0.0, 0.03):
                 for delta_ci in (-0.02, 0.0, 0.02):
-                    seeds.append((max(0.0, seed_cr + delta_cr), max(ci_min_search, seed_ci + delta_ci)))
+                    seeds.append((max(0.0, seed_cr + delta_cr), max(ci_search_floor, seed_ci + delta_ci)))
         if anchor_guess is not None:
             seed_cr, seed_ci = anchor_guess
             for delta_cr in (-0.03, 0.0, 0.03):
                 for delta_ci in (-0.02, 0.0, 0.02):
-                    seeds.append((max(0.0, seed_cr + delta_cr), max(ci_min_search, seed_ci + delta_ci)))
+                    seeds.append((max(0.0, seed_cr + delta_cr), max(ci_search_floor, seed_ci + delta_ci)))
         else:
             coarse_cr = np.linspace(0.0, cr_max, 5)
-            coarse_ci = np.linspace(max(ci_min_search, self.ci_floor), ci_max, 7)
+            coarse_ci = np.linspace(max(ci_search_floor, self.ci_floor), ci_max, 7)
             coarse_evals = []
             for cr in coarse_cr:
                 for ci in coarse_ci:
                     mismatch_value = self.mismatch(np.array([cr, ci], dtype=float))
                     coarse_evals.append((mismatch_value, cr, ci))
             coarse_evals.sort(key=lambda item: item[0])
-            nontrivial_coarse = [item for item in coarse_evals if item[2] >= ci_min_search]
+            nontrivial_coarse = [item for item in coarse_evals if item[2] >= ci_search_floor]
             seeds.extend((item[1], item[2]) for item in nontrivial_coarse[:6])
 
         best_result = None
-        bounds = [(0.0, cr_max), (ci_min_search, ci_max)]
+        bounds = [(0.0, cr_max), (ci_search_floor, ci_max)]
         seen = set()
         for seed in seeds:
             rounded_seed = (round(seed[0], 4), round(seed[1], 4))
