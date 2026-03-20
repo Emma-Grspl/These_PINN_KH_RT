@@ -7,8 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-ROOT_DIR = Path("/Users/emma.grospellier/Thèse/These_PINN_KH_RT")
+ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen"
 OUTPUT_DIR = ROOT_DIR / "assets" / "blumen"
 

@@ -6,8 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-ROOT_DIR = Path("/Users/emma.grospellier/Thèse/These_PINN_KH_RT")
+ROOT_DIR = Path(__file__).resolve().parents[2]
 ERROR_CSV = ROOT_DIR / "assets" / "blumen_shooting" / "subsonic_shooting_error_by_point.csv"
 OUTPUT_PNG = ROOT_DIR / "assets" / "blumen_shooting" / "subsonic_shooting_error_map.png"
 
