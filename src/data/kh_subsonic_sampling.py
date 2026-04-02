@@ -127,6 +127,58 @@ def sample_alpha_adaptive_batch(
     return alpha[permutation]
 
 
+def sample_mach_batch(
+    n_points: int,
+    *,
+    mach_min: float,
+    mach_max: float,
+    device: torch.device,
+) -> torch.Tensor:
+    mach = torch.rand(n_points, 1, device=device)
+    return mach_min + (mach_max - mach_min) * mach
+
+
+def sample_alpha_mach_adaptive_batch(
+    n_points: int,
+    *,
+    alpha_min: float,
+    alpha_max: float,
+    mach_min: float,
+    mach_max: float,
+    focus_points: np.ndarray | None,
+    focus_fraction: float,
+    alpha_half_width: float,
+    mach_half_width: float,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    n_focus = int(round(focus_fraction * n_points))
+    if focus_points is None or len(focus_points) == 0:
+        n_focus = 0
+    n_focus = min(max(n_focus, 0), n_points)
+    n_uniform = n_points - n_focus
+
+    alpha_chunks: list[torch.Tensor] = []
+    mach_chunks: list[torch.Tensor] = []
+
+    if n_uniform > 0:
+        alpha_chunks.append(sample_alpha_batch(n_uniform, alpha_min=alpha_min, alpha_max=alpha_max, device=device))
+        mach_chunks.append(sample_mach_batch(n_uniform, mach_min=mach_min, mach_max=mach_max, device=device))
+
+    if n_focus > 0:
+        focus_idx = torch.randint(0, len(focus_points), (n_focus,), device=device)
+        focus_tensor = torch.tensor(focus_points, dtype=torch.float32, device=device)
+        centers = focus_tensor[focus_idx]
+        alpha_local = (2.0 * torch.rand(n_focus, 1, device=device) - 1.0) * alpha_half_width
+        mach_local = (2.0 * torch.rand(n_focus, 1, device=device) - 1.0) * mach_half_width
+        alpha_chunks.append(torch.clamp(centers[:, 0:1] + alpha_local, min=alpha_min, max=alpha_max))
+        mach_chunks.append(torch.clamp(centers[:, 1:2] + mach_local, min=mach_min, max=mach_max))
+
+    alpha = torch.cat(alpha_chunks, dim=0)
+    mach = torch.cat(mach_chunks, dim=0)
+    permutation = torch.randperm(alpha.shape[0], device=device)
+    return alpha[permutation], mach[permutation]
+
+
 @dataclass
 class SubsonicReferenceCache:
     mach: float
@@ -159,3 +211,61 @@ class SubsonicReferenceCache:
         alphas = np.linspace(self.alpha_values.min(), self.alpha_values.max(), num_points, dtype=float)
         cis = np.interp(alphas, self.alpha_values, self.ci_values)
         return alphas, cis
+
+
+@dataclass
+class SubsonicReferenceCache2D:
+    alpha_values: np.ndarray
+    mach_values: np.ndarray
+    ci_grid: np.ndarray
+
+    @classmethod
+    def build(
+        cls,
+        *,
+        alpha_min: float,
+        alpha_max: float,
+        mach_min: float,
+        mach_max: float,
+        num_alpha: int,
+        num_mach: int,
+    ) -> "SubsonicReferenceCache2D":
+        alpha_values = np.linspace(alpha_min, alpha_max, num_alpha, dtype=float)
+        mach_values = np.linspace(mach_min, mach_max, num_mach, dtype=float)
+        ci_grid = np.zeros((num_mach, num_alpha), dtype=float)
+        for i, mach in enumerate(mach_values):
+            for j, alpha in enumerate(alpha_values):
+                solver = RobustSubsonicShootingSolver(alpha=float(alpha), Mach=float(mach))
+                result = solver.solve()
+                ci_grid[i, j] = float(result.ci)
+        return cls(alpha_values=alpha_values, mach_values=mach_values, ci_grid=ci_grid)
+
+    def interpolate(self, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
+        alpha_np = alpha.detach().cpu().numpy().reshape(-1)
+        mach_np = mach.detach().cpu().numpy().reshape(-1)
+        out = np.zeros_like(alpha_np)
+        for idx, (a, m) in enumerate(zip(alpha_np, mach_np)):
+            mach_idx = np.searchsorted(self.mach_values, m, side="left")
+            mach_idx = int(np.clip(mach_idx, 1, len(self.mach_values) - 1))
+            m0, m1 = self.mach_values[mach_idx - 1], self.mach_values[mach_idx]
+            w = 0.0 if np.isclose(m1, m0) else (m - m0) / (m1 - m0)
+            ci0 = np.interp(a, self.alpha_values, self.ci_grid[mach_idx - 1])
+            ci1 = np.interp(a, self.alpha_values, self.ci_grid[mach_idx])
+            out[idx] = (1.0 - w) * ci0 + w * ci1
+        return torch.tensor(out, dtype=alpha.dtype, device=alpha.device).view(-1, 1)
+
+    def audit_grid(self, *, num_alpha: int, num_mach: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        alpha_eval = np.linspace(self.alpha_values.min(), self.alpha_values.max(), num_alpha, dtype=float)
+        mach_eval = np.linspace(self.mach_values.min(), self.mach_values.max(), num_mach, dtype=float)
+        aa, mm = np.meshgrid(alpha_eval, mach_eval)
+        ci_eval = np.zeros_like(aa)
+        for i in range(mm.shape[0]):
+            for j in range(mm.shape[1]):
+                mach_idx = np.searchsorted(self.mach_values, mm[i, j], side="left")
+                mach_idx = int(np.clip(mach_idx, 1, len(self.mach_values) - 1))
+                m0, m1 = self.mach_values[mach_idx - 1], self.mach_values[mach_idx]
+                w = 0.0 if np.isclose(m1, m0) else (mm[i, j] - m0) / (m1 - m0)
+                ci0 = np.interp(aa[i, j], self.alpha_values, self.ci_grid[mach_idx - 1])
+                ci1 = np.interp(aa[i, j], self.alpha_values, self.ci_grid[mach_idx])
+                ci_eval[i, j] = (1.0 - w) * ci0 + w * ci1
+        return aa, mm, ci_eval

@@ -131,3 +131,86 @@ class KHSubsonicFixedMachPINN(nn.Module):
 
     def get_mapping_scale(self) -> torch.Tensor:
         return F.softplus(self.raw_L) + 1e-6
+
+
+class KHSubsonicMultiMachPINN(nn.Module):
+    """
+    Prototype PINN subsonique 2D sur (alpha, Mach).
+
+    - reseau de mode : (xi, alpha_normalise, mach_normalise) -> (p_r, p_i)
+    - tete spectrale : (alpha_normalise, mach_normalise) -> c_i(alpha, Mach)
+    """
+
+    def __init__(
+        self,
+        *,
+        alpha_min: float,
+        alpha_max: float,
+        mach_min: float,
+        mach_max: float,
+        hidden_dim: int = 128,
+        mode_depth: int = 4,
+        ci_depth: int = 2,
+        activation: str = "tanh",
+        fourier_features: int = 0,
+        fourier_scale: float = 2.0,
+        initial_ci: float = 0.3,
+        mapping_scale: float = 3.0,
+        trainable_mapping_scale: bool = False,
+    ):
+        super().__init__()
+        self.alpha_min = float(alpha_min)
+        self.alpha_max = float(alpha_max)
+        self.mach_min = float(mach_min)
+        self.mach_max = float(mach_max)
+
+        self.mode_fourier = FourierEncoding(3, fourier_features, fourier_scale) if fourier_features > 0 else None
+        mode_input_dim = 6 * fourier_features if fourier_features > 0 else 3
+        self.mode_net = build_mlp(
+            mode_input_dim,
+            2,
+            hidden_dim=hidden_dim,
+            depth=mode_depth,
+            activation=activation,
+        )
+        self.ci_net = build_mlp(
+            2,
+            1,
+            hidden_dim=hidden_dim // 2,
+            depth=ci_depth,
+            activation=activation,
+        )
+
+        initial_raw_ci_bias = torch.log(torch.expm1(torch.tensor(float(initial_ci))))
+        self.raw_ci_bias = nn.Parameter(initial_raw_ci_bias.view(1))
+
+        initial_raw_L = torch.log(torch.expm1(torch.tensor(float(mapping_scale))))
+        if trainable_mapping_scale:
+            self.raw_L = nn.Parameter(initial_raw_L.view(1))
+        else:
+            self.register_buffer("raw_L", initial_raw_L.view(1))
+
+    def normalize_alpha(self, alpha: torch.Tensor) -> torch.Tensor:
+        span = max(self.alpha_max - self.alpha_min, 1e-8)
+        return 2.0 * (alpha - self.alpha_min) / span - 1.0
+
+    def normalize_mach(self, mach: torch.Tensor) -> torch.Tensor:
+        span = max(self.mach_max - self.mach_min, 1e-8)
+        return 2.0 * (mach - self.mach_min) / span - 1.0
+
+    def encode_mode_inputs(self, xi: torch.Tensor, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
+        inputs = torch.cat([xi, self.normalize_alpha(alpha), self.normalize_mach(mach)], dim=-1)
+        if self.mode_fourier is None:
+            return inputs
+        return self.mode_fourier(inputs)
+
+    def forward(self, xi: torch.Tensor, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
+        return self.mode_net(self.encode_mode_inputs(xi, alpha, mach))
+
+    def get_ci(self, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
+        inputs = torch.cat([self.normalize_alpha(alpha), self.normalize_mach(mach)], dim=-1)
+        raw_ci = self.ci_net(inputs) + self.raw_ci_bias
+        return F.softplus(raw_ci) + 1e-6
+
+    def get_mapping_scale(self) -> torch.Tensor:
+        return F.softplus(self.raw_L) + 1e-6
