@@ -179,6 +179,63 @@ def sample_alpha_mach_adaptive_batch(
     return alpha[permutation], mach[permutation]
 
 
+def sample_alpha_mach_adaptive_neutral_batch(
+    n_points: int,
+    *,
+    alpha_min: float,
+    alpha_max: float,
+    mach_min: float,
+    mach_max: float,
+    focus_points: np.ndarray | None,
+    focus_fraction: float,
+    neutral_fraction: float,
+    alpha_half_width: float,
+    mach_half_width: float,
+    neutral_band_ratio: float,
+    device: torch.device,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    n_focus = int(round(focus_fraction * n_points))
+    if focus_points is None or len(focus_points) == 0:
+        n_focus = 0
+    n_focus = min(max(n_focus, 0), n_points)
+
+    remaining = n_points - n_focus
+    n_neutral = int(round(neutral_fraction * n_points))
+    n_neutral = min(max(n_neutral, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral
+
+    alpha_chunks: list[torch.Tensor] = []
+    mach_chunks: list[torch.Tensor] = []
+
+    if n_uniform > 0:
+        alpha_chunks.append(sample_alpha_batch(n_uniform, alpha_min=alpha_min, alpha_max=alpha_max, device=device))
+        mach_chunks.append(sample_mach_batch(n_uniform, mach_min=mach_min, mach_max=mach_max, device=device))
+
+    if n_focus > 0:
+        focus_idx = torch.randint(0, len(focus_points), (n_focus,), device=device)
+        focus_tensor = torch.tensor(focus_points, dtype=torch.float32, device=device)
+        centers = focus_tensor[focus_idx]
+        alpha_local = (2.0 * torch.rand(n_focus, 1, device=device) - 1.0) * alpha_half_width
+        mach_local = (2.0 * torch.rand(n_focus, 1, device=device) - 1.0) * mach_half_width
+        alpha_chunks.append(torch.clamp(centers[:, 0:1] + alpha_local, min=alpha_min, max=alpha_max))
+        mach_chunks.append(torch.clamp(centers[:, 1:2] + mach_local, min=mach_min, max=mach_max))
+
+    if n_neutral > 0:
+        mach_neutral = sample_mach_batch(n_neutral, mach_min=mach_min, mach_max=mach_max, device=device)
+        alpha_c = torch.sqrt(torch.clamp(1.0 - mach_neutral.pow(2), min=0.0))
+        band = neutral_band_ratio * alpha_c
+        alpha_low = torch.clamp(alpha_c - band, min=alpha_min, max=alpha_max)
+        alpha_high = torch.clamp(alpha_c, min=alpha_min, max=alpha_max)
+        alpha_neutral = alpha_low + (alpha_high - alpha_low) * torch.rand(n_neutral, 1, device=device)
+        alpha_chunks.append(alpha_neutral)
+        mach_chunks.append(mach_neutral)
+
+    alpha = torch.cat(alpha_chunks, dim=0)
+    mach = torch.cat(mach_chunks, dim=0)
+    permutation = torch.randperm(alpha.shape[0], device=device)
+    return alpha[permutation], mach[permutation]
+
+
 @dataclass
 class SubsonicReferenceCache:
     mach: float

@@ -11,7 +11,7 @@ import torch.optim as optim
 from src.data.kh_subsonic_sampling import (
     SubsonicReferenceCache2D,
     reference_point,
-    sample_alpha_mach_adaptive_batch,
+    sample_alpha_mach_adaptive_neutral_batch,
     sample_boundary_points,
     sample_interior_points,
 )
@@ -51,8 +51,10 @@ class KHSubsonic2DTrainingConfig:
     audit_every: int = 100
     checkpoint_every: int = 500
     focus_fraction: float = 0.6
+    neutral_fraction: float = 0.2
     focus_alpha_half_width: float = 0.03
     focus_mach_half_width: float = 0.05
+    neutral_band_ratio: float = 0.15
     error_threshold: float = 0.02
     max_focus_points: int = 12
     w_pde: float = 1.0
@@ -141,7 +143,7 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         optimizer.zero_grad()
 
         xi_interior = sample_interior_points(cfg.n_interior, device=device)
-        alpha_interior, mach_interior = sample_alpha_mach_adaptive_batch(
+        alpha_interior, mach_interior = sample_alpha_mach_adaptive_neutral_batch(
             cfg.n_interior,
             alpha_min=cfg.alpha_min,
             alpha_max=cfg.alpha_max,
@@ -149,12 +151,14 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             mach_max=cfg.mach_max,
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
+            neutral_fraction=cfg.neutral_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
+            neutral_band_ratio=cfg.neutral_band_ratio,
             device=device,
         )
         xi_left, xi_right = sample_boundary_points(cfg.n_boundary, device=device)
-        alpha_boundary, mach_boundary = sample_alpha_mach_adaptive_batch(
+        alpha_boundary, mach_boundary = sample_alpha_mach_adaptive_neutral_batch(
             cfg.n_boundary,
             alpha_min=cfg.alpha_min,
             alpha_max=cfg.alpha_max,
@@ -162,12 +166,14 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             mach_max=cfg.mach_max,
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
+            neutral_fraction=cfg.neutral_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
+            neutral_band_ratio=cfg.neutral_band_ratio,
             device=device,
         )
         xi_ref = reference_point(device=device)
-        alpha_ref, mach_ref = sample_alpha_mach_adaptive_batch(
+        alpha_ref, mach_ref = sample_alpha_mach_adaptive_neutral_batch(
             1,
             alpha_min=cfg.alpha_min,
             alpha_max=cfg.alpha_max,
@@ -175,11 +181,13 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             mach_max=cfg.mach_max,
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
+            neutral_fraction=cfg.neutral_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
+            neutral_band_ratio=cfg.neutral_band_ratio,
             device=device,
         )
-        alpha_supervision, mach_supervision = sample_alpha_mach_adaptive_batch(
+        alpha_supervision, mach_supervision = sample_alpha_mach_adaptive_neutral_batch(
             cfg.n_supervision,
             alpha_min=cfg.alpha_min,
             alpha_max=cfg.alpha_max,
@@ -187,8 +195,10 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             mach_max=cfg.mach_max,
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
+            neutral_fraction=cfg.neutral_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
+            neutral_band_ratio=cfg.neutral_band_ratio,
             device=device,
         )
 

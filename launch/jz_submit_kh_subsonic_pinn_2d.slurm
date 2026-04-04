@@ -9,7 +9,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=10
 #SBATCH --hint=nomultithread
-#SBATCH --time=10:00:00
+#SBATCH --time=20:00:00
 #SBATCH --qos=qos_gpu-t3
 
 set -euo pipefail
@@ -40,7 +40,7 @@ srun python3 scripts/train_kh_subsonic_pinn_2d.py \
   --alpha-max 0.85 \
   --mach-min 0.0 \
   --mach-max 0.5 \
-  --epochs 3000 \
+  --epochs 5000 \
   --audit-every 100 \
   --checkpoint-every 500 \
   --mapping-scale 3.0 \
@@ -49,9 +49,11 @@ srun python3 scripts/train_kh_subsonic_pinn_2d.py \
   --n-audit-alpha 17 \
   --n-audit-mach 6 \
   --focus-fraction 0.6 \
+  --neutral-fraction 0.2 \
   --focus-alpha-half-width 0.03 \
   --focus-mach-half-width 0.05 \
+  --neutral-band-ratio 0.15 \
   --error-threshold 0.02 \
   --max-focus-points 12 \
   --device cuda \
-  --output-dir model_saved/kh_subsonic_2d_local_m0005_jz
+  --output-dir model_saved/kh_subsonic_2d_local_m0005_jz_neutral
