@@ -52,9 +52,11 @@ class KHSubsonic2DTrainingConfig:
     checkpoint_every: int = 500
     focus_fraction: float = 0.6
     neutral_fraction: float = 0.2
+    low_alpha_fraction: float = 0.15
     focus_alpha_half_width: float = 0.03
     focus_mach_half_width: float = 0.05
     neutral_band_ratio: float = 0.15
+    low_alpha_band_width: float = 0.06
     error_threshold: float = 0.02
     max_focus_points: int = 12
     w_pde: float = 1.0
@@ -152,9 +154,11 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
+            low_alpha_fraction=cfg.low_alpha_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
+            low_alpha_band_width=cfg.low_alpha_band_width,
             device=device,
         )
         xi_left, xi_right = sample_boundary_points(cfg.n_boundary, device=device)
@@ -167,9 +171,11 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
+            low_alpha_fraction=cfg.low_alpha_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
+            low_alpha_band_width=cfg.low_alpha_band_width,
             device=device,
         )
         xi_ref = reference_point(device=device)
@@ -182,9 +188,11 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
+            low_alpha_fraction=cfg.low_alpha_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
+            low_alpha_band_width=cfg.low_alpha_band_width,
             device=device,
         )
         alpha_supervision, mach_supervision = sample_alpha_mach_adaptive_neutral_batch(
@@ -196,9 +204,11 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_points=focus_points,
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
+            low_alpha_fraction=cfg.low_alpha_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
+            low_alpha_band_width=cfg.low_alpha_band_width,
             device=device,
         )
 

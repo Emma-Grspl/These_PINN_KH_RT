@@ -43,9 +43,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--neutral-fraction", type=float, default=0.2)
+    parser.add_argument("--low-alpha-fraction", type=float, default=0.15)
     parser.add_argument("--focus-alpha-half-width", type=float, default=0.03)
     parser.add_argument("--focus-mach-half-width", type=float, default=0.05)
     parser.add_argument("--neutral-band-ratio", type=float, default=0.15)
+    parser.add_argument("--low-alpha-band-width", type=float, default=0.06)
     parser.add_argument("--error-threshold", type=float, default=0.02)
     parser.add_argument("--max-focus-points", type=int, default=12)
     parser.add_argument("--w-pde", type=float, default=1.0)
@@ -87,9 +89,11 @@ def main() -> None:
         checkpoint_every=args.checkpoint_every,
         focus_fraction=args.focus_fraction,
         neutral_fraction=args.neutral_fraction,
+        low_alpha_fraction=args.low_alpha_fraction,
         focus_alpha_half_width=args.focus_alpha_half_width,
         focus_mach_half_width=args.focus_mach_half_width,
         neutral_band_ratio=args.neutral_band_ratio,
+        low_alpha_band_width=args.low_alpha_band_width,
         error_threshold=args.error_threshold,
         max_focus_points=args.max_focus_points,
         w_pde=args.w_pde,

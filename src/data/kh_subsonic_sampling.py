@@ -189,9 +189,11 @@ def sample_alpha_mach_adaptive_neutral_batch(
     focus_points: np.ndarray | None,
     focus_fraction: float,
     neutral_fraction: float,
+    low_alpha_fraction: float,
     alpha_half_width: float,
     mach_half_width: float,
     neutral_band_ratio: float,
+    low_alpha_band_width: float,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     n_focus = int(round(focus_fraction * n_points))
@@ -202,7 +204,10 @@ def sample_alpha_mach_adaptive_neutral_batch(
     remaining = n_points - n_focus
     n_neutral = int(round(neutral_fraction * n_points))
     n_neutral = min(max(n_neutral, 0), remaining)
-    n_uniform = n_points - n_focus - n_neutral
+    remaining -= n_neutral
+    n_low_alpha = int(round(low_alpha_fraction * n_points))
+    n_low_alpha = min(max(n_low_alpha, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral - n_low_alpha
 
     alpha_chunks: list[torch.Tensor] = []
     mach_chunks: list[torch.Tensor] = []
@@ -229,6 +234,18 @@ def sample_alpha_mach_adaptive_neutral_batch(
         alpha_neutral = alpha_low + (alpha_high - alpha_low) * torch.rand(n_neutral, 1, device=device)
         alpha_chunks.append(alpha_neutral)
         mach_chunks.append(mach_neutral)
+
+    if n_low_alpha > 0:
+        mach_low = sample_mach_batch(n_low_alpha, mach_min=mach_min, mach_max=mach_max, device=device)
+        alpha_high = min(alpha_max, alpha_min + low_alpha_band_width)
+        alpha_low_edge = sample_alpha_batch(
+            n_low_alpha,
+            alpha_min=alpha_min,
+            alpha_max=alpha_high,
+            device=device,
+        )
+        alpha_chunks.append(alpha_low_edge)
+        mach_chunks.append(mach_low)
 
     alpha = torch.cat(alpha_chunks, dim=0)
     mach = torch.cat(mach_chunks, dim=0)
