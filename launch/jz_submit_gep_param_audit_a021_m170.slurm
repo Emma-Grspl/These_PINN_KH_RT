@@ -7,7 +7,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=32
 #SBATCH --hint=nomultithread
-#SBATCH --time=10:00:00
+#SBATCH --time=20:00:00
 #SBATCH --qos=qos_cpu-t3
 
 set -euo pipefail
