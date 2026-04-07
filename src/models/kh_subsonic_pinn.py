@@ -77,10 +77,12 @@ class KHSubsonicFixedMachPINN(nn.Module):
         initial_ci: float = 0.3,
         mapping_scale: float = 3.0,
         trainable_mapping_scale: bool = False,
+        enforce_mode_symmetry: bool = False,
     ):
         super().__init__()
         self.alpha_min = float(alpha_min)
         self.alpha_max = float(alpha_max)
+        self.enforce_mode_symmetry = bool(enforce_mode_symmetry)
 
         self.mode_fourier = FourierEncoding(2, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 4 * fourier_features if fourier_features > 0 else 2
@@ -121,8 +123,14 @@ class KHSubsonicFixedMachPINN(nn.Module):
         return self.mode_fourier(inputs)
 
     def forward(self, xi: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
-        features = self.encode_mode_inputs(xi, alpha)
-        return self.mode_net(features)
+        xi_in = torch.abs(xi) if self.enforce_mode_symmetry else xi
+        features = self.encode_mode_inputs(xi_in, alpha)
+        outputs = self.mode_net(features)
+        if not self.enforce_mode_symmetry:
+            return outputs
+        pr = outputs[:, 0:1]
+        pi = outputs[:, 1:2] * torch.sign(xi)
+        return torch.cat([pr, pi], dim=-1)
 
     def get_ci(self, alpha: torch.Tensor) -> torch.Tensor:
         alpha_n = self.normalize_alpha(alpha)

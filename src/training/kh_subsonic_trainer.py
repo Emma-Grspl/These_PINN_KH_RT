@@ -71,6 +71,7 @@ class KHSubsonicTrainingConfig:
     classic_n_points: int = 561
     classic_mapping_scale: float = 3.0
     classic_xi_max: float = 0.99
+    enforce_mode_symmetry: bool = False
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
     device: str = "cpu"
 
@@ -240,6 +241,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         initial_ci=cfg.initial_ci,
         mapping_scale=cfg.mapping_scale,
         trainable_mapping_scale=cfg.trainable_mapping_scale,
+        enforce_mode_symmetry=cfg.enforce_mode_symmetry,
     ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
     king = KingOfTheHill(model)
