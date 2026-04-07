@@ -21,6 +21,34 @@ def sample_interior_points(
     return xi
 
 
+def sample_mode_interior_points(
+    n_points: int,
+    *,
+    center_fraction: float,
+    center_half_width: float,
+    xi_min: float = -0.98,
+    xi_max: float = 0.98,
+    device: torch.device,
+) -> torch.Tensor:
+    n_center = int(round(center_fraction * n_points))
+    n_center = min(max(n_center, 0), n_points)
+    n_uniform = n_points - n_center
+
+    chunks: list[torch.Tensor] = []
+    if n_uniform > 0:
+        chunks.append(sample_interior_points(n_uniform, xi_min=xi_min, xi_max=xi_max, device=device))
+    if n_center > 0:
+        half_width = min(max(float(center_half_width), 1e-4), abs(xi_max))
+        xi_center = torch.rand(n_center, 1, device=device)
+        xi_center = -half_width + 2.0 * half_width * xi_center
+        xi_center.requires_grad_(True)
+        chunks.append(xi_center)
+
+    xi = torch.cat(chunks, dim=0)
+    permutation = torch.randperm(xi.shape[0], device=device)
+    return xi[permutation]
+
+
 def sample_boundary_points(
     n_points_per_side: int,
     *,

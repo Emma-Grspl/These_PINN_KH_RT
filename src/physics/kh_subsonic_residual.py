@@ -97,9 +97,24 @@ def normalization_loss(
     return torch.mean((pred - target) ** 2)
 
 
+def integral_normalization_loss(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    *,
+    target_energy: float = 1.0,
+) -> torch.Tensor:
+    pred = model(xi, alpha)
+    energy = torch.mean(pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2))
+    target = torch.tensor(float(target_energy), dtype=pred.dtype, device=pred.device)
+    return (energy - target).pow(2)
+
+
 def phase_loss(model, xi_ref: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     pred = model(xi_ref, alpha)
-    return torch.mean(pred[:, 1:2].pow(2))
+    imag_penalty = torch.mean(pred[:, 1:2].pow(2))
+    sign_penalty = torch.mean(torch.relu(-pred[:, 0:1]).pow(2))
+    return imag_penalty + sign_penalty
 
 
 def pressure_ode_residual_2d(

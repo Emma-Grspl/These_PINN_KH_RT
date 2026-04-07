@@ -34,19 +34,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-interior", type=int, default=512)
     parser.add_argument("--n-boundary", type=int, default=64)
     parser.add_argument("--n-alpha-supervision", type=int, default=128)
+    parser.add_argument("--n-anchor-alpha", type=int, default=32)
+    parser.add_argument("--n-norm-interior", type=int, default=256)
     parser.add_argument("--n-reference-alpha", type=int, default=81)
     parser.add_argument("--n-audit-alpha", type=int, default=21)
+    parser.add_argument("--n-mode-audit-alpha", type=int, default=7)
+    parser.add_argument("--n-mode-audit-y", type=int, default=801)
     parser.add_argument("--audit-every", type=int, default=250)
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--focus-half-width", type=float, default=0.03)
     parser.add_argument("--error-threshold", type=float, default=0.01)
+    parser.add_argument("--mode-error-threshold", type=float, default=0.12)
     parser.add_argument("--max-focus-points", type=int, default=8)
+    parser.add_argument("--mode-center-fraction", type=float, default=0.5)
+    parser.add_argument("--mode-center-half-width", type=float, default=0.3)
     parser.add_argument("--w-pde", type=float, default=1.0)
     parser.add_argument("--w-bc", type=float, default=10.0)
     parser.add_argument("--w-norm", type=float, default=1.0)
+    parser.add_argument("--w-integral-norm", type=float, default=1.0)
     parser.add_argument("--w-phase", type=float, default=1.0)
     parser.add_argument("--w-ci-supervision", type=float, default=5.0)
+    parser.add_argument("--audit-ci-weight", type=float, default=10.0)
+    parser.add_argument("--audit-mode-weight", type=float, default=1.0)
+    parser.add_argument("--classic-n-points", type=int, default=561)
+    parser.add_argument("--classic-mapping-scale", type=float, default=3.0)
+    parser.add_argument("--classic-xi-max", type=float, default=0.99)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
     return parser
@@ -72,19 +85,32 @@ def main() -> None:
         n_interior=args.n_interior,
         n_boundary=args.n_boundary,
         n_alpha_supervision=args.n_alpha_supervision,
+        n_anchor_alpha=args.n_anchor_alpha,
+        n_norm_interior=args.n_norm_interior,
         n_reference_alpha=args.n_reference_alpha,
         n_audit_alpha=args.n_audit_alpha,
+        n_mode_audit_alpha=args.n_mode_audit_alpha,
+        n_mode_audit_y=args.n_mode_audit_y,
         audit_every=args.audit_every,
         checkpoint_every=args.checkpoint_every,
         focus_fraction=args.focus_fraction,
         focus_half_width=args.focus_half_width,
         error_threshold=args.error_threshold,
+        mode_error_threshold=args.mode_error_threshold,
         max_focus_points=args.max_focus_points,
+        mode_center_fraction=args.mode_center_fraction,
+        mode_center_half_width=args.mode_center_half_width,
         w_pde=args.w_pde,
         w_bc=args.w_bc,
         w_norm=args.w_norm,
+        w_integral_norm=args.w_integral_norm,
         w_phase=args.w_phase,
         w_ci_supervision=args.w_ci_supervision,
+        audit_ci_weight=args.audit_ci_weight,
+        audit_mode_weight=args.audit_mode_weight,
+        classic_n_points=args.classic_n_points,
+        classic_mapping_scale=args.classic_mapping_scale,
+        classic_xi_max=args.classic_xi_max,
         output_dir=str(args.output_dir),
         device=args.device,
     )
