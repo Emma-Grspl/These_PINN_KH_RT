@@ -90,6 +90,11 @@ class KingOfTheHill:
         return False
 
 
+def safe_torch_save(state_dict: dict, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(state_dict, path)
+
+
 def normalize_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     idx = int(np.argmax(np.abs(p)))
     if np.abs(p[idx]) > 0.0:
@@ -383,7 +388,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         history.append(record)
 
         if epoch % cfg.checkpoint_every == 0:
-            torch.save(model.state_dict(), output_dir / f"checkpoint_epoch_{epoch}.pt")
+            safe_torch_save(model.state_dict(), output_dir / f"checkpoint_epoch_{epoch}.pt")
 
     model.load_state_dict(king.best_state)
     return model, pd.DataFrame(history)
@@ -396,6 +401,6 @@ def save_training_artifacts(
 ) -> None:
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), output_dir / "model_best.pt")
+    safe_torch_save(model.state_dict(), output_dir / "model_best.pt")
     history.to_csv(output_dir / "history.csv", index=False)
     pd.DataFrame([asdict(cfg)]).to_csv(output_dir / "config.csv", index=False)
