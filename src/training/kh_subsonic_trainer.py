@@ -91,7 +91,7 @@ class KingOfTheHill:
 
 def safe_torch_save(state_dict: dict, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(state_dict, path)
+    torch.save(state_dict, path, _use_new_zipfile_serialization=False)
 
 
 def normalize_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
