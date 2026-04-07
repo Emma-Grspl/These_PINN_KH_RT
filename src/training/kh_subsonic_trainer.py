@@ -11,9 +11,7 @@ import torch.optim as optim
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver
 from src.data.kh_subsonic_sampling import (
     SubsonicReferenceCache,
-    reference_point,
     sample_alpha_adaptive_batch,
-    sample_alpha_batch,
     sample_boundary_points,
     sample_mode_interior_points,
 )
@@ -21,7 +19,6 @@ from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
 from src.physics.kh_subsonic_residual import (
     boundary_decay_loss,
     integral_normalization_loss,
-    normalization_loss,
     phase_loss,
     pressure_ode_residual,
     xi_to_y,
@@ -60,6 +57,7 @@ class KHSubsonicTrainingConfig:
     error_threshold: float = 0.01
     mode_error_threshold: float = 0.12
     max_focus_points: int = 8
+    anchor_half_width: float = 0.12
     mode_center_fraction: float = 0.5
     mode_center_half_width: float = 0.3
     w_pde: float = 1.0
@@ -286,7 +284,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             device=device,
         )
-        xi_ref = torch.zeros(cfg.n_anchor_alpha, 1, device=device, requires_grad=True)
+        xi_ref = sample_mode_interior_points(
+            cfg.n_anchor_alpha,
+            center_fraction=1.0,
+            center_half_width=cfg.anchor_half_width,
+            device=device,
+        )
         xi_norm = sample_mode_interior_points(
             cfg.n_norm_interior,
             center_fraction=cfg.mode_center_fraction,
@@ -318,7 +321,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
         loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
         loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
-        loss_norm = normalization_loss(model, xi_ref, alpha_ref)
+        loss_norm = integral_normalization_loss(model, xi_ref, alpha_ref)
         loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
         loss_phase = phase_loss(model, xi_ref, alpha_ref)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
