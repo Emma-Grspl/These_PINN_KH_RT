@@ -16,7 +16,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from classical_solver.subsonic.robust_subsonic_shooting import RobustSubsonicShootingSolver
 from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
-from src.physics.kh_subsonic_residual import xi_to_y
+from src.physics.kh_subsonic_residual import base_velocity, base_velocity_derivative, dy_dxi, xi_to_y
 
 
 def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
@@ -32,6 +32,8 @@ def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
         initial_ci=float(config["initial_ci"]),
         mapping_scale=float(config["mapping_scale"]),
         trainable_mapping_scale=bool(config["trainable_mapping_scale"]),
+        enforce_mode_symmetry=bool(config["enforce_mode_symmetry"]) if "enforce_mode_symmetry" in config.index else False,
+        mode_representation=str(config["mode_representation"]) if "mode_representation" in config.index else "cartesian",
     )
 
 
@@ -59,6 +61,60 @@ def load_model(run_dir: Path, device: torch.device) -> tuple[KHSubsonicFixedMach
     model.to(device)
     model.eval()
     return model, config, history
+
+
+def reconstruct_subsonic_fields(
+    model: KHSubsonicFixedMachPINN,
+    *,
+    xi: torch.Tensor,
+    alpha: float,
+    mach: float,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    xi = xi.clone().detach().to(device)
+    xi.requires_grad_(True)
+    alpha_tensor = torch.full_like(xi, float(alpha))
+
+    pred = model(xi, alpha_tensor)
+    p_r = pred[:, 0:1]
+    p_i = pred[:, 1:2]
+    p = p_r + 1j * p_i
+
+    p_r_xi = torch.autograd.grad(p_r, xi, grad_outputs=torch.ones_like(p_r), create_graph=False, retain_graph=True)[0]
+    p_i_xi = torch.autograd.grad(p_i, xi, grad_outputs=torch.ones_like(p_i), create_graph=False, retain_graph=True)[0]
+    p_xi = p_r_xi + 1j * p_i_xi
+
+    mapping_scale = model.get_mapping_scale().detach()
+    y = xi_to_y(xi, mapping_scale)
+    y_xi = dy_dxi(xi, mapping_scale)
+    p_y = p_xi / y_xi
+
+    ci = model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).view(1, 1)
+    c = -1j * ci
+    u_bar = base_velocity(y)
+    du_bar = base_velocity_derivative(y)
+    i_alpha = 1j * float(alpha)
+
+    v = -p_y / (i_alpha * (u_bar - c))
+    u = -(du_bar * v + i_alpha * p) / (i_alpha * (u_bar - c))
+    rho = p * (float(mach) ** 2)
+
+    u_np = u.detach().cpu().numpy().reshape(-1)
+    v_np = v.detach().cpu().numpy().reshape(-1)
+    p_np = p.detach().cpu().numpy().reshape(-1)
+    rho_np = rho.detach().cpu().numpy().reshape(-1)
+    y_np = y.detach().cpu().numpy().reshape(-1)
+
+    idx = int(np.argmax(np.abs(rho_np)))
+    if np.abs(rho_np[idx]) > 0.0:
+        phase = np.exp(-1j * np.angle(rho_np[idx]))
+        u_np, v_np, p_np, rho_np = u_np * phase, v_np * phase, p_np * phase, rho_np * phase
+
+    if np.max(np.real(rho_np)) < abs(np.min(np.real(rho_np))):
+        u_np, v_np, p_np, rho_np = -u_np, -v_np, -p_np, -rho_np
+
+    scale = max(np.max(np.abs(np.real(rho_np))), np.max(np.abs(np.imag(rho_np))), 1e-12)
+    return y_np, u_np / scale, v_np / scale, p_np / scale, rho_np / scale
 
 
 def plot_history(history: pd.DataFrame, output_path: Path) -> None:
@@ -141,41 +197,40 @@ def plot_modes_pdf(
     device: torch.device,
 ) -> None:
     xi = torch.linspace(-0.98, 0.98, n_y, device=device).view(-1, 1)
-    mapping_scale = model.get_mapping_scale().detach()
-    y = xi_to_y(xi, mapping_scale).detach().cpu().numpy().reshape(-1)
 
     with PdfPages(output_path) as pdf:
         for alpha in alpha_values:
-            alpha_tensor = torch.full_like(xi, float(alpha))
-            with torch.no_grad():
-                pred = model(xi, alpha_tensor)
-                ci_pred = float(model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).item())
-
-            p_r = pred[:, 0].detach().cpu().numpy()
-            p_i = pred[:, 1].detach().cpu().numpy()
-            norm = max(np.max(np.abs(p_r)), np.max(np.abs(p_i)), 1e-12)
-            p_r = p_r / norm
-            p_i = p_i / norm
+            y, u, v, p, rho = reconstruct_subsonic_fields(
+                model,
+                xi=xi,
+                alpha=float(alpha),
+                mach=float(config["mach"]),
+                device=device,
+            )
+            ci_pred = float(model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).item())
 
             ci_ref = RobustSubsonicShootingSolver(alpha=float(alpha), Mach=float(config["mach"])).solve().ci
 
-            fig, axes = plt.subplots(1, 2, figsize=(11, 4.5))
-            axes[0].plot(y, p_r, label="Re(p)")
-            axes[0].plot(y, p_i, "--", label="Im(p)")
-            axes[0].set_title(fr"Mode PINN pour $\alpha={alpha:.3f}$")
-            axes[0].set_xlabel("y")
-            axes[0].grid(True, alpha=0.3)
-            axes[0].legend()
+            fig, axes = plt.subplots(2, 2, figsize=(10, 8), sharex=True)
+            fields = [rho, u, v, p]
+            titles = [
+                r"Density Perturbation $\hat{\rho}$",
+                r"Streamwise Velocity $\hat{u}$",
+                r"Vertical Velocity $\hat{v}$",
+                r"Pressure Perturbation $\hat{p}$",
+            ]
+            for ax, field, title in zip(axes.flat, fields, titles):
+                ax.plot(y, np.real(field), label="Real")
+                ax.plot(y, np.imag(field), "--", label="Imag")
+                ax.set_title(title)
+                ax.grid(True, alpha=0.3)
+                ax.legend()
 
-            axes[1].plot(y, np.tanh(y), label=r"$U(y)=\tanh(y)$")
-            axes[1].set_title(
-                fr"$c_i^{{PINN}}={ci_pred:.5f}$, $c_i^{{ref}}={ci_ref:.5f}$"
+            fig.suptitle(
+                fr"Most unstable eigenmode for $\alpha={alpha:.3f}$ and $M={float(config['mach']):.3f}$"
+                "\n"
+                fr"PINN: $c_i={ci_pred:.5f}$ | Ref: $c_i={ci_ref:.5f}$"
             )
-            axes[1].set_xlabel("y")
-            axes[1].grid(True, alpha=0.3)
-            axes[1].legend()
-
-            fig.suptitle(fr"Prototype PINN subsonique | M={float(config['mach']):.3f}")
             fig.tight_layout()
             pdf.savefig(fig)
             plt.close(fig)

@@ -78,11 +78,15 @@ class KHSubsonicFixedMachPINN(nn.Module):
         mapping_scale: float = 3.0,
         trainable_mapping_scale: bool = False,
         enforce_mode_symmetry: bool = False,
+        mode_representation: str = "cartesian",
     ):
         super().__init__()
         self.alpha_min = float(alpha_min)
         self.alpha_max = float(alpha_max)
         self.enforce_mode_symmetry = bool(enforce_mode_symmetry)
+        if mode_representation not in {"cartesian", "amplitude_phase"}:
+            raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
+        self.mode_representation = str(mode_representation)
 
         self.mode_fourier = FourierEncoding(2, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 4 * fourier_features if fourier_features > 0 else 2
@@ -122,15 +126,27 @@ class KHSubsonicFixedMachPINN(nn.Module):
             return inputs
         return self.mode_fourier(inputs)
 
+    def decode_mode_outputs(self, xi: torch.Tensor, raw_outputs: torch.Tensor) -> torch.Tensor:
+        if self.mode_representation == "cartesian":
+            if not self.enforce_mode_symmetry:
+                return raw_outputs
+            pr = raw_outputs[:, 0:1]
+            pi = raw_outputs[:, 1:2] * torch.sign(xi)
+            return torch.cat([pr, pi], dim=-1)
+
+        amp = F.softplus(raw_outputs[:, 0:1]) + 1e-6
+        phase = raw_outputs[:, 1:2]
+        if self.enforce_mode_symmetry:
+            phase = phase * torch.sign(xi)
+        pr = amp * torch.cos(phase)
+        pi = amp * torch.sin(phase)
+        return torch.cat([pr, pi], dim=-1)
+
     def forward(self, xi: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
         xi_in = torch.abs(xi) if self.enforce_mode_symmetry else xi
         features = self.encode_mode_inputs(xi_in, alpha)
-        outputs = self.mode_net(features)
-        if not self.enforce_mode_symmetry:
-            return outputs
-        pr = outputs[:, 0:1]
-        pi = outputs[:, 1:2] * torch.sign(xi)
-        return torch.cat([pr, pi], dim=-1)
+        raw_outputs = self.mode_net(features)
+        return self.decode_mode_outputs(xi, raw_outputs)
 
     def get_ci(self, alpha: torch.Tensor) -> torch.Tensor:
         alpha_n = self.normalize_alpha(alpha)

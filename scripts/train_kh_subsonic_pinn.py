@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--classic-mapping-scale", type=float, default=3.0)
     parser.add_argument("--classic-xi-max", type=float, default=0.99)
     parser.add_argument("--enforce-mode-symmetry", action="store_true")
+    parser.add_argument("--mode-representation", type=str, default="cartesian", choices=["cartesian", "amplitude_phase"])
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
     return parser
@@ -115,6 +116,7 @@ def main() -> None:
         classic_mapping_scale=args.classic_mapping_scale,
         classic_xi_max=args.classic_xi_max,
         enforce_mode_symmetry=args.enforce_mode_symmetry,
+        mode_representation=args.mode_representation,
         output_dir=str(args.output_dir),
         device=args.device,
     )
