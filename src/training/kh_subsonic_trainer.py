@@ -114,17 +114,19 @@ def build_anchor_points(
     cfg: KHSubsonicTrainingConfig,
     *,
     device: torch.device,
-) -> torch.Tensor:
+) -> tuple[torch.Tensor, torch.Tensor]:
     if cfg.anchor_strategy == "point":
-        return torch.zeros(alpha_ref.shape[0], 1, device=device, requires_grad=True)
+        xi = torch.zeros(alpha_ref.shape[0], 1, device=device, requires_grad=True)
+        return xi, alpha_ref
 
     if cfg.anchor_strategy == "band":
-        return sample_mode_interior_points(
+        xi = sample_mode_interior_points(
             alpha_ref.shape[0],
             center_fraction=1.0,
             center_half_width=cfg.anchor_half_width,
             device=device,
         )
+        return xi, alpha_ref
 
     if cfg.anchor_strategy == "max":
         candidate_xi = torch.linspace(
@@ -142,7 +144,28 @@ def build_anchor_points(
                 max_idx = int(torch.argmax(amp2).item())
                 xi_out[idx, 0] = candidate_xi[max_idx, 0]
         xi_out.requires_grad_(True)
-        return xi_out
+        return xi_out, alpha_ref
+
+    if cfg.anchor_strategy == "point_max":
+        xi_point = torch.zeros(alpha_ref.shape[0], 1, device=device)
+        candidate_xi = torch.linspace(
+            -cfg.mode_center_half_width,
+            cfg.mode_center_half_width,
+            cfg.anchor_max_candidates,
+            device=device,
+        ).view(-1, 1)
+        xi_max = torch.empty(alpha_ref.shape[0], 1, device=device)
+        with torch.no_grad():
+            for idx in range(alpha_ref.shape[0]):
+                alpha_i = alpha_ref[idx : idx + 1].repeat(candidate_xi.shape[0], 1)
+                pred = model(candidate_xi, alpha_i)
+                amp2 = pred[:, 0].pow(2) + pred[:, 1].pow(2)
+                max_idx = int(torch.argmax(amp2).item())
+                xi_max[idx, 0] = candidate_xi[max_idx, 0]
+        xi_out = torch.cat([xi_point, xi_max], dim=0)
+        alpha_out = torch.cat([alpha_ref, alpha_ref], dim=0)
+        xi_out.requires_grad_(True)
+        return xi_out, alpha_out
 
     raise ValueError(f"Unsupported anchor_strategy={cfg.anchor_strategy!r}.")
 
@@ -330,7 +353,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             device=device,
         )
-        xi_ref = build_anchor_points(model, alpha_ref, cfg, device=device)
+        xi_ref, alpha_anchor = build_anchor_points(model, alpha_ref, cfg, device=device)
         xi_norm = sample_mode_interior_points(
             cfg.n_norm_interior,
             center_fraction=cfg.mode_center_fraction,
@@ -362,12 +385,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
         loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
         loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
-        if cfg.anchor_strategy == "point" or cfg.anchor_strategy == "max":
-            loss_norm = normalization_loss(model, xi_ref, alpha_ref)
+        if cfg.anchor_strategy in {"point", "max", "point_max"}:
+            loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
         else:
-            loss_norm = integral_normalization_loss(model, xi_ref, alpha_ref)
+            loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
         loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
-        loss_phase = phase_loss(model, xi_ref, alpha_ref)
+        loss_phase = phase_loss(model, xi_ref, alpha_anchor)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
 
         loss = (
