@@ -47,7 +47,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--error-threshold", type=float, default=0.01)
     parser.add_argument("--mode-error-threshold", type=float, default=0.12)
     parser.add_argument("--max-focus-points", type=int, default=8)
+    parser.add_argument("--anchor-strategy", type=str, default="band", choices=["point", "band", "max"])
     parser.add_argument("--anchor-half-width", type=float, default=0.12)
+    parser.add_argument("--anchor-max-candidates", type=int, default=257)
     parser.add_argument("--mode-center-fraction", type=float, default=0.5)
     parser.add_argument("--mode-center-half-width", type=float, default=0.3)
     parser.add_argument("--w-pde", type=float, default=1.0)
@@ -101,7 +103,9 @@ def main() -> None:
         error_threshold=args.error_threshold,
         mode_error_threshold=args.mode_error_threshold,
         max_focus_points=args.max_focus_points,
+        anchor_strategy=args.anchor_strategy,
         anchor_half_width=args.anchor_half_width,
+        anchor_max_candidates=args.anchor_max_candidates,
         mode_center_fraction=args.mode_center_fraction,
         mode_center_half_width=args.mode_center_half_width,
         w_pde=args.w_pde,

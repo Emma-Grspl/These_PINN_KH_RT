@@ -19,6 +19,7 @@ from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
 from src.physics.kh_subsonic_residual import (
     boundary_decay_loss,
     integral_normalization_loss,
+    normalization_loss,
     phase_loss,
     pressure_ode_residual,
     xi_to_y,
@@ -57,7 +58,9 @@ class KHSubsonicTrainingConfig:
     error_threshold: float = 0.01
     mode_error_threshold: float = 0.12
     max_focus_points: int = 8
+    anchor_strategy: str = "band"
     anchor_half_width: float = 0.12
+    anchor_max_candidates: int = 257
     mode_center_fraction: float = 0.5
     mode_center_half_width: float = 0.3
     w_pde: float = 1.0
@@ -103,6 +106,45 @@ def normalize_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, n
         p = -p
     scale = max(np.max(np.abs(p)), 1e-12)
     return y, p / scale
+
+
+def build_anchor_points(
+    model: KHSubsonicFixedMachPINN,
+    alpha_ref: torch.Tensor,
+    cfg: KHSubsonicTrainingConfig,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    if cfg.anchor_strategy == "point":
+        return torch.zeros(alpha_ref.shape[0], 1, device=device, requires_grad=True)
+
+    if cfg.anchor_strategy == "band":
+        return sample_mode_interior_points(
+            alpha_ref.shape[0],
+            center_fraction=1.0,
+            center_half_width=cfg.anchor_half_width,
+            device=device,
+        )
+
+    if cfg.anchor_strategy == "max":
+        candidate_xi = torch.linspace(
+            -cfg.mode_center_half_width,
+            cfg.mode_center_half_width,
+            cfg.anchor_max_candidates,
+            device=device,
+        ).view(-1, 1)
+        xi_out = torch.empty(alpha_ref.shape[0], 1, device=device)
+        with torch.no_grad():
+            for idx in range(alpha_ref.shape[0]):
+                alpha_i = alpha_ref[idx : idx + 1].repeat(candidate_xi.shape[0], 1)
+                pred = model(candidate_xi, alpha_i)
+                amp2 = pred[:, 0].pow(2) + pred[:, 1].pow(2)
+                max_idx = int(torch.argmax(amp2).item())
+                xi_out[idx, 0] = candidate_xi[max_idx, 0]
+        xi_out.requires_grad_(True)
+        return xi_out
+
+    raise ValueError(f"Unsupported anchor_strategy={cfg.anchor_strategy!r}.")
 
 
 class PressureModeReferenceCache:
@@ -288,12 +330,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             device=device,
         )
-        xi_ref = sample_mode_interior_points(
-            cfg.n_anchor_alpha,
-            center_fraction=1.0,
-            center_half_width=cfg.anchor_half_width,
-            device=device,
-        )
+        xi_ref = build_anchor_points(model, alpha_ref, cfg, device=device)
         xi_norm = sample_mode_interior_points(
             cfg.n_norm_interior,
             center_fraction=cfg.mode_center_fraction,
@@ -325,7 +362,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
         loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
         loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
-        loss_norm = integral_normalization_loss(model, xi_ref, alpha_ref)
+        if cfg.anchor_strategy == "point" or cfg.anchor_strategy == "max":
+            loss_norm = normalization_loss(model, xi_ref, alpha_ref)
+        else:
+            loss_norm = integral_normalization_loss(model, xi_ref, alpha_ref)
         loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
         loss_phase = phase_loss(model, xi_ref, alpha_ref)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
