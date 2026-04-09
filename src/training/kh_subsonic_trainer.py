@@ -71,6 +71,10 @@ class KHSubsonicTrainingConfig:
     w_ci_supervision: float = 5.0
     audit_ci_weight: float = 10.0
     audit_mode_weight: float = 1.0
+    audit_env_weight: float = 1.0
+    audit_phase_weight: float = 0.5
+    audit_peak_weight: float = 0.25
+    phase_mask_fraction: float = 0.15
     classic_n_points: int = 561
     classic_mapping_scale: float = 3.0
     classic_xi_max: float = 0.99
@@ -196,14 +200,15 @@ class PressureModeReferenceCache:
         return self.cache[alpha_key]
 
 
-def compute_mode_relative_l2(
+def compute_mode_diagnostics(
     model: KHSubsonicFixedMachPINN,
     *,
     alpha: float,
     device: torch.device,
     n_y: int,
     reference_cache: PressureModeReferenceCache,
-) -> float:
+    phase_mask_fraction: float,
+) -> dict[str, float]:
     y_ref, p_ref = reference_cache.get(alpha)
 
     xi = torch.linspace(-0.98, 0.98, n_y, device=device).view(-1, 1)
@@ -223,8 +228,38 @@ def compute_mode_relative_l2(
     p_pred_interp = np.interp(y_common, y_pred, np.real(p_pred)) + 1j * np.interp(y_common, y_pred, np.imag(p_pred))
     denom = np.linalg.norm(p_ref_interp)
     if denom <= 1e-12:
-        return float(np.linalg.norm(p_pred_interp - p_ref_interp))
-    return float(np.linalg.norm(p_pred_interp - p_ref_interp) / denom)
+        p_rel = float(np.linalg.norm(p_pred_interp - p_ref_interp))
+    else:
+        p_rel = float(np.linalg.norm(p_pred_interp - p_ref_interp) / denom)
+
+    env_ref = np.abs(p_ref_interp)
+    env_pred = np.abs(p_pred_interp)
+    env_denom = np.linalg.norm(env_ref)
+    if env_denom <= 1e-12:
+        env_rel = float(np.linalg.norm(env_pred - env_ref))
+    else:
+        env_rel = float(np.linalg.norm(env_pred - env_ref) / env_denom)
+
+    env_threshold = float(phase_mask_fraction) * max(float(env_ref.max()), 1e-12)
+    mask = env_ref >= env_threshold
+    if np.any(mask):
+        phase_ref = np.angle(p_ref_interp[mask])
+        phase_pred = np.angle(p_pred_interp[mask])
+        phase_diff = np.angle(np.exp(1j * (phase_pred - phase_ref)))
+        phase_rel = float(np.sqrt(np.mean(phase_diff**2)) / np.pi)
+    else:
+        phase_rel = float("inf")
+
+    peak_ref_idx = int(np.argmax(env_ref))
+    peak_pred_idx = int(np.argmax(env_pred))
+    peak_shift = float(abs(y_common[peak_pred_idx] - y_common[peak_ref_idx]))
+
+    return {
+        "p_rel": p_rel,
+        "env_rel": env_rel,
+        "phase_rel": phase_rel,
+        "peak_shift": peak_shift,
+    }
 
 
 def audit_ci_and_mode(
@@ -244,19 +279,21 @@ def audit_ci_and_mode(
     denom = abs(ci_true_np) + 1e-8
     ci_rel_err = ci_abs_err / denom
     mode_alphas = np.linspace(cfg.alpha_min, cfg.alpha_max, cfg.n_mode_audit_alpha, dtype=float)
-    mode_rel_err = np.array(
-        [
-            compute_mode_relative_l2(
-                model,
-                alpha=float(alpha),
-                device=device,
-                n_y=cfg.n_mode_audit_y,
-                reference_cache=mode_reference_cache,
-            )
-            for alpha in mode_alphas
-        ],
-        dtype=float,
-    )
+    mode_diag = [
+        compute_mode_diagnostics(
+            model,
+            alpha=float(alpha),
+            device=device,
+            n_y=cfg.n_mode_audit_y,
+            reference_cache=mode_reference_cache,
+            phase_mask_fraction=cfg.phase_mask_fraction,
+        )
+        for alpha in mode_alphas
+    ]
+    mode_rel_err = np.array([row["p_rel"] for row in mode_diag], dtype=float)
+    env_rel_err = np.array([row["env_rel"] for row in mode_diag], dtype=float)
+    phase_rel_err = np.array([row["phase_rel"] for row in mode_diag], dtype=float)
+    peak_shift_err = np.array([row["peak_shift"] for row in mode_diag], dtype=float)
     metrics = {
         "audit_ci_mae": float(ci_abs_err.mean()),
         "audit_ci_max_abs": float(ci_abs_err.max()),
@@ -264,9 +301,18 @@ def audit_ci_and_mode(
         "audit_ci_max_rel": float(ci_rel_err.max()),
         "audit_p_rel_l2_mean": float(mode_rel_err.mean()),
         "audit_p_rel_l2_max": float(mode_rel_err.max()),
+        "audit_env_rel_mean": float(env_rel_err.mean()),
+        "audit_env_rel_max": float(env_rel_err.max()),
+        "audit_phase_rel_mean": float(phase_rel_err.mean()),
+        "audit_phase_rel_max": float(phase_rel_err.max()),
+        "audit_peak_shift_mean": float(peak_shift_err.mean()),
+        "audit_peak_shift_max": float(peak_shift_err.max()),
     }
     metrics["audit_checkpoint_metric"] = (
-        cfg.audit_ci_weight * metrics["audit_ci_mae"] + cfg.audit_mode_weight * metrics["audit_p_rel_l2_mean"]
+        cfg.audit_ci_weight * metrics["audit_ci_mae"]
+        + cfg.audit_env_weight * metrics["audit_env_rel_mean"]
+        + cfg.audit_phase_weight * metrics["audit_phase_rel_mean"]
+        + cfg.audit_peak_weight * metrics["audit_peak_shift_mean"]
     )
     return (
         metrics,
@@ -452,6 +498,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 f"Epoch {epoch:5d} | loss={record['loss']:.3e} | "
                 f"ci_mae={record['audit_ci_mae']:.3e} | "
                 f"p_rel={record['audit_p_rel_l2_mean']:.3e} | "
+                f"env={record['audit_env_rel_mean']:.3e} | "
+                f"phase={record['audit_phase_rel_mean']:.3e} | "
+                f"peak={record['audit_peak_shift_mean']:.3e} | "
                 f"n_focus={record['n_focus_alphas']} | "
                 f"L={record['mapping_scale']:.3f}"
             )

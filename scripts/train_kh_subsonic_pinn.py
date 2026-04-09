@@ -60,6 +60,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w-ci-supervision", type=float, default=5.0)
     parser.add_argument("--audit-ci-weight", type=float, default=10.0)
     parser.add_argument("--audit-mode-weight", type=float, default=1.0)
+    parser.add_argument("--audit-env-weight", type=float, default=1.0)
+    parser.add_argument("--audit-phase-weight", type=float, default=0.5)
+    parser.add_argument("--audit-peak-weight", type=float, default=0.25)
+    parser.add_argument("--phase-mask-fraction", type=float, default=0.15)
     parser.add_argument("--classic-n-points", type=int, default=561)
     parser.add_argument("--classic-mapping-scale", type=float, default=3.0)
     parser.add_argument("--classic-xi-max", type=float, default=0.99)
@@ -116,6 +120,10 @@ def main() -> None:
         w_ci_supervision=args.w_ci_supervision,
         audit_ci_weight=args.audit_ci_weight,
         audit_mode_weight=args.audit_mode_weight,
+        audit_env_weight=args.audit_env_weight,
+        audit_phase_weight=args.audit_phase_weight,
+        audit_peak_weight=args.audit_peak_weight,
+        phase_mask_fraction=args.phase_mask_fraction,
         classic_n_points=args.classic_n_points,
         classic_mapping_scale=args.classic_mapping_scale,
         classic_xi_max=args.classic_xi_max,
