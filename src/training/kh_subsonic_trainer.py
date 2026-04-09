@@ -57,6 +57,12 @@ class KHSubsonicTrainingConfig:
     n_mode_audit_y: int = 801
     audit_every: int = 250
     checkpoint_every: int = 500
+    stage_split_epoch: int = 0
+    stage2_freeze_ci: bool = False
+    stage1_w_ci_supervision: float | None = None
+    stage2_w_ci_supervision: float | None = None
+    stage1_neutral_fraction: float | None = None
+    stage2_neutral_fraction: float | None = None
     focus_fraction: float = 0.6
     focus_half_width: float = 0.03
     neutral_fraction: float = 0.0
@@ -382,7 +388,28 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     neutral_alpha = None
     if cfg.mach < 1.0:
         neutral_alpha = float(np.sqrt(max(1.0 - cfg.mach**2, 0.0)))
+    stage2_started = False
     for epoch in range(1, cfg.epochs + 1):
+        if cfg.stage_split_epoch > 0 and epoch == cfg.stage_split_epoch + 1 and not stage2_started:
+            stage2_started = True
+            if cfg.stage2_freeze_ci:
+                for param in model.ci_net.parameters():
+                    param.requires_grad_(False)
+                model.raw_ci_bias.requires_grad_(False)
+                optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=cfg.learning_rate)
+
+        stage_w_ci_supervision = cfg.w_ci_supervision
+        if not stage2_started and cfg.stage1_w_ci_supervision is not None:
+            stage_w_ci_supervision = cfg.stage1_w_ci_supervision
+        if stage2_started and cfg.stage2_w_ci_supervision is not None:
+            stage_w_ci_supervision = cfg.stage2_w_ci_supervision
+
+        stage_neutral_fraction = cfg.neutral_fraction
+        if not stage2_started and cfg.stage1_neutral_fraction is not None:
+            stage_neutral_fraction = cfg.stage1_neutral_fraction
+        if stage2_started and cfg.stage2_neutral_fraction is not None:
+            stage_neutral_fraction = cfg.stage2_neutral_fraction
+
         model.train()
         optimizer.zero_grad()
 
@@ -399,7 +426,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=cfg.neutral_fraction,
+            neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -412,7 +439,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=cfg.neutral_fraction,
+            neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -424,7 +451,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=cfg.neutral_fraction,
+            neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -443,7 +470,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=cfg.neutral_fraction,
+            neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -456,7 +483,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=cfg.neutral_fraction,
+            neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -500,7 +527,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             + cfg.w_peak_curvature * loss_peak_curvature
             + cfg.w_loc_center * loss_loc_center
             + cfg.w_loc_spread * loss_loc_spread
-            + cfg.w_ci_supervision * loss_ci
+            + stage_w_ci_supervision * loss_ci
         )
         loss.backward()
         optimizer.step()
@@ -520,6 +547,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_loc_center": float(loss_loc_center.item()),
             "loss_loc_spread": float(loss_loc_spread.item()),
             "loss_ci_supervision": float(loss_ci.item()),
+            "stage_w_ci_supervision": float(stage_w_ci_supervision),
+            "stage_neutral_fraction": float(stage_neutral_fraction),
+            "stage2_started": int(stage2_started),
             "mapping_scale": float(model.get_mapping_scale().item()),
             "ci_mid": float(model.get_ci(torch.tensor([[0.5 * (cfg.alpha_min + cfg.alpha_max)]], device=device)).item()),
         }

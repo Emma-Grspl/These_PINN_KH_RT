@@ -42,6 +42,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-mode-audit-y", type=int, default=801)
     parser.add_argument("--audit-every", type=int, default=250)
     parser.add_argument("--checkpoint-every", type=int, default=500)
+    parser.add_argument("--stage-split-epoch", type=int, default=0)
+    parser.add_argument("--stage2-freeze-ci", action="store_true")
+    parser.add_argument("--stage1-w-ci-supervision", type=float, default=None)
+    parser.add_argument("--stage2-w-ci-supervision", type=float, default=None)
+    parser.add_argument("--stage1-neutral-fraction", type=float, default=None)
+    parser.add_argument("--stage2-neutral-fraction", type=float, default=None)
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--focus-half-width", type=float, default=0.03)
     parser.add_argument("--neutral-fraction", type=float, default=0.0)
@@ -110,6 +116,12 @@ def main() -> None:
         n_mode_audit_y=args.n_mode_audit_y,
         audit_every=args.audit_every,
         checkpoint_every=args.checkpoint_every,
+        stage_split_epoch=args.stage_split_epoch,
+        stage2_freeze_ci=args.stage2_freeze_ci,
+        stage1_w_ci_supervision=args.stage1_w_ci_supervision,
+        stage2_w_ci_supervision=args.stage2_w_ci_supervision,
+        stage1_neutral_fraction=args.stage1_neutral_fraction,
+        stage2_neutral_fraction=args.stage2_neutral_fraction,
         focus_fraction=args.focus_fraction,
         focus_half_width=args.focus_half_width,
         neutral_fraction=args.neutral_fraction,
