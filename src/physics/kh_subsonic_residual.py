@@ -132,6 +132,22 @@ def localization_moment_losses(
     return y_bar.pow(2), spread
 
 
+def local_peak_envelope_losses(
+    model,
+    xi_ref: torch.Tensor,
+    alpha: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if not xi_ref.requires_grad:
+        xi_ref.requires_grad_(True)
+    pred = model(xi_ref, alpha)
+    env2 = pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2)
+    env2_xi = _differentiate(env2, xi_ref)
+    env2_xixi = _differentiate(env2_xi, xi_ref)
+    slope_loss = torch.mean(env2_xi.pow(2))
+    curvature_loss = torch.mean(torch.relu(env2_xixi).pow(2))
+    return slope_loss, curvature_loss
+
+
 def pressure_ode_residual_2d(
     model,
     xi: torch.Tensor,

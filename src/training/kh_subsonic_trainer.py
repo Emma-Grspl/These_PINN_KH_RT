@@ -19,6 +19,7 @@ from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
 from src.physics.kh_subsonic_residual import (
     boundary_decay_loss,
     integral_normalization_loss,
+    local_peak_envelope_losses,
     localization_moment_losses,
     normalization_loss,
     phase_loss,
@@ -69,6 +70,8 @@ class KHSubsonicTrainingConfig:
     w_norm: float = 1.0
     w_integral_norm: float = 1.0
     w_phase: float = 1.0
+    w_peak_slope: float = 0.0
+    w_peak_curvature: float = 0.0
     w_loc_center: float = 0.0
     w_loc_spread: float = 0.0
     w_ci_supervision: float = 5.0
@@ -440,6 +443,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
         loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
         loss_phase = phase_loss(model, xi_ref, alpha_anchor)
+        loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
         loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
 
@@ -449,6 +453,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             + cfg.w_norm * loss_norm
             + cfg.w_integral_norm * loss_integral_norm
             + cfg.w_phase * loss_phase
+            + cfg.w_peak_slope * loss_peak_slope
+            + cfg.w_peak_curvature * loss_peak_curvature
             + cfg.w_loc_center * loss_loc_center
             + cfg.w_loc_spread * loss_loc_spread
             + cfg.w_ci_supervision * loss_ci
@@ -464,6 +470,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_norm": float(loss_norm.item()),
             "loss_integral_norm": float(loss_integral_norm.item()),
             "loss_phase": float(loss_phase.item()),
+            "loss_peak_slope": float(loss_peak_slope.item()),
+            "loss_peak_curvature": float(loss_peak_curvature.item()),
             "loss_loc_center": float(loss_loc_center.item()),
             "loss_loc_spread": float(loss_loc_spread.item()),
             "loss_ci_supervision": float(loss_ci.item()),

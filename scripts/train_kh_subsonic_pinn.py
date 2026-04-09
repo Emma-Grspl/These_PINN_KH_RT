@@ -57,6 +57,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w-norm", type=float, default=1.0)
     parser.add_argument("--w-integral-norm", type=float, default=1.0)
     parser.add_argument("--w-phase", type=float, default=1.0)
+    parser.add_argument("--w-peak-slope", type=float, default=0.0)
+    parser.add_argument("--w-peak-curvature", type=float, default=0.0)
     parser.add_argument("--w-loc-center", type=float, default=0.0)
     parser.add_argument("--w-loc-spread", type=float, default=0.0)
     parser.add_argument("--w-ci-supervision", type=float, default=5.0)
@@ -119,6 +121,8 @@ def main() -> None:
         w_norm=args.w_norm,
         w_integral_norm=args.w_integral_norm,
         w_phase=args.w_phase,
+        w_peak_slope=args.w_peak_slope,
+        w_peak_curvature=args.w_peak_curvature,
         w_loc_center=args.w_loc_center,
         w_loc_spread=args.w_loc_spread,
         w_ci_supervision=args.w_ci_supervision,
