@@ -117,6 +117,21 @@ def phase_loss(model, xi_ref: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor
     return imag_penalty + sign_penalty
 
 
+def localization_moment_losses(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    pred = model(xi, alpha)
+    mapping_scale = model.get_mapping_scale()
+    y = xi_to_y(xi, mapping_scale)
+    weight = pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2) + 1e-12
+    weight_sum = torch.mean(weight) + 1e-12
+    y_bar = torch.mean(y * weight) / weight_sum
+    spread = torch.mean((y - y_bar).pow(2) * weight) / weight_sum
+    return y_bar.pow(2), spread
+
+
 def pressure_ode_residual_2d(
     model,
     xi: torch.Tensor,
