@@ -84,7 +84,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
         self.alpha_min = float(alpha_min)
         self.alpha_max = float(alpha_max)
         self.enforce_mode_symmetry = bool(enforce_mode_symmetry)
-        if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase"}:
+        if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
 
@@ -133,6 +133,13 @@ class KHSubsonicFixedMachPINN(nn.Module):
             pr = raw_outputs[:, 0:1]
             pi = raw_outputs[:, 1:2] * torch.sign(xi)
             return torch.cat([pr, pi], dim=-1)
+
+        if self.mode_representation == "riccati":
+            if not self.enforce_mode_symmetry:
+                return raw_outputs
+            kappa = raw_outputs[:, 0:1]
+            q = raw_outputs[:, 1:2] * torch.sign(xi)
+            return torch.cat([kappa, q], dim=-1)
 
         if self.mode_representation == "amplitude_phase":
             amp = F.softplus(raw_outputs[:, 0:1]) + 1e-6

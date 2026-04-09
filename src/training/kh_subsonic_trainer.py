@@ -24,6 +24,7 @@ from src.physics.kh_subsonic_residual import (
     normalization_loss,
     phase_loss,
     pressure_ode_residual,
+    reconstruct_pressure_from_riccati,
     xi_to_y,
 )
 
@@ -220,9 +221,14 @@ def compute_mode_diagnostics(
     xi = torch.linspace(-0.98, 0.98, n_y, device=device).view(-1, 1)
     alpha_tensor = torch.full_like(xi, float(alpha))
     with torch.no_grad():
-        pred = model(xi, alpha_tensor)
-        y_pred = xi_to_y(xi, model.get_mapping_scale().detach()).cpu().numpy().reshape(-1)
-        p_pred = (pred[:, 0] + 1j * pred[:, 1]).cpu().numpy().reshape(-1)
+        if model.mode_representation == "riccati":
+            pr, pi, y_pred_t = reconstruct_pressure_from_riccati(model, xi, alpha_tensor, anchor_xi=0.0)
+            y_pred = y_pred_t.cpu().numpy().reshape(-1)
+            p_pred = (pr[:, 0] + 1j * pi[:, 0]).cpu().numpy().reshape(-1)
+        else:
+            pred = model(xi, alpha_tensor)
+            y_pred = xi_to_y(xi, model.get_mapping_scale().detach()).cpu().numpy().reshape(-1)
+            p_pred = (pred[:, 0] + 1j * pred[:, 1]).cpu().numpy().reshape(-1)
     y_pred, p_pred = normalize_pressure_mode(y_pred, p_pred)
 
     y_min = max(float(np.min(y_ref)), float(np.min(y_pred)))
@@ -362,6 +368,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         enforce_mode_symmetry=cfg.enforce_mode_symmetry,
         mode_representation=cfg.mode_representation,
     ).to(device)
+    model.mach = float(cfg.mach)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
     king = KingOfTheHill(model)
     focus_alphas: np.ndarray | None = None
@@ -437,14 +444,23 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
         loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
         loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
-        if cfg.anchor_strategy in {"point", "max", "point_max"}:
-            loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
+        if model.mode_representation == "riccati":
+            loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_integral_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_phase = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_peak_slope = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_peak_curvature = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_loc_center = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+            loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         else:
-            loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
-        loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
-        loss_phase = phase_loss(model, xi_ref, alpha_anchor)
-        loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
-        loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
+            if cfg.anchor_strategy in {"point", "max", "point_max"}:
+                loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
+            else:
+                loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
+            loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
+            loss_phase = phase_loss(model, xi_ref, alpha_anchor)
+            loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
+            loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
 
         loss = (
