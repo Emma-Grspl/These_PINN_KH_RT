@@ -125,13 +125,22 @@ def sample_alpha_adaptive_batch(
     focus_alphas: np.ndarray | None,
     focus_fraction: float,
     focus_half_width: float,
+    neutral_fraction: float = 0.0,
+    neutral_alpha: float | None = None,
+    neutral_half_width: float = 0.0,
     device: torch.device,
 ) -> torch.Tensor:
     n_focus = int(round(focus_fraction * n_points))
     if focus_alphas is None or len(focus_alphas) == 0:
         n_focus = 0
     n_focus = min(max(n_focus, 0), n_points)
-    n_uniform = n_points - n_focus
+
+    remaining = n_points - n_focus
+    n_neutral = int(round(neutral_fraction * n_points))
+    if neutral_alpha is None or neutral_half_width <= 0.0:
+        n_neutral = 0
+    n_neutral = min(max(n_neutral, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral
 
     chunks: list[torch.Tensor] = []
     if n_uniform > 0:
@@ -149,6 +158,18 @@ def sample_alpha_adaptive_batch(
         local = (2.0 * torch.rand(n_focus, 1, device=device) - 1.0) * focus_half_width
         focused = torch.clamp(focus_centers + local, min=alpha_min, max=alpha_max)
         chunks.append(focused)
+
+    if n_neutral > 0:
+        alpha_low = max(alpha_min, float(neutral_alpha) - float(neutral_half_width))
+        alpha_high = min(alpha_max, float(neutral_alpha) + float(neutral_half_width))
+        chunks.append(
+            sample_alpha_batch(
+                n_neutral,
+                alpha_min=alpha_low,
+                alpha_max=alpha_high,
+                device=device,
+            )
+        )
 
     alpha = torch.cat(chunks, dim=0)
     permutation = torch.randperm(alpha.shape[0], device=device)

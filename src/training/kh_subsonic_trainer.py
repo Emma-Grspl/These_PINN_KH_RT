@@ -24,6 +24,7 @@ from src.physics.kh_subsonic_residual import (
     normalization_loss,
     phase_loss,
     pressure_ode_residual,
+    riccati_boundary_loss_components,
     reconstruct_pressure_from_riccati,
     xi_to_y,
 )
@@ -58,6 +59,8 @@ class KHSubsonicTrainingConfig:
     checkpoint_every: int = 500
     focus_fraction: float = 0.6
     focus_half_width: float = 0.03
+    neutral_fraction: float = 0.0
+    neutral_half_width: float = 0.03
     error_threshold: float = 0.01
     mode_error_threshold: float = 0.12
     max_focus_points: int = 8
@@ -68,6 +71,8 @@ class KHSubsonicTrainingConfig:
     mode_center_half_width: float = 0.3
     w_pde: float = 1.0
     w_bc: float = 10.0
+    w_bc_kappa: float = 10.0
+    w_bc_q: float = 10.0
     w_norm: float = 1.0
     w_integral_norm: float = 1.0
     w_phase: float = 1.0
@@ -374,6 +379,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     focus_alphas: np.ndarray | None = None
 
     history: list[dict] = []
+    neutral_alpha = None
+    if cfg.mach < 1.0:
+        neutral_alpha = float(np.sqrt(max(1.0 - cfg.mach**2, 0.0)))
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         optimizer.zero_grad()
@@ -391,6 +399,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            neutral_fraction=cfg.neutral_fraction,
+            neutral_alpha=neutral_alpha,
+            neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
         xi_left, xi_right = sample_boundary_points(cfg.n_boundary, device=device)
@@ -401,6 +412,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            neutral_fraction=cfg.neutral_fraction,
+            neutral_alpha=neutral_alpha,
+            neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
         alpha_ref = sample_alpha_adaptive_batch(
@@ -410,6 +424,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            neutral_fraction=cfg.neutral_fraction,
+            neutral_alpha=neutral_alpha,
+            neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
         xi_ref, alpha_anchor = build_anchor_points(model, alpha_ref, cfg, device=device)
@@ -426,6 +443,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            neutral_fraction=cfg.neutral_fraction,
+            neutral_alpha=neutral_alpha,
+            neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
 
@@ -436,6 +456,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            neutral_fraction=cfg.neutral_fraction,
+            neutral_alpha=neutral_alpha,
+            neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
         ci_target = reference_cache.interpolate(alpha_supervision)
@@ -444,7 +467,11 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
         loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
         loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
+        loss_bc_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_bc_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         if model.mode_representation == "riccati":
+            loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
+            loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
             loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
             loss_integral_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
             loss_phase = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -465,7 +492,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
 
         loss = (
             cfg.w_pde * loss_pde
-            + cfg.w_bc * loss_bc
+            + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
             + cfg.w_norm * loss_norm
             + cfg.w_integral_norm * loss_integral_norm
             + cfg.w_phase * loss_phase
@@ -483,6 +510,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss": float(loss.item()),
             "loss_pde": float(loss_pde.item()),
             "loss_bc": float(loss_bc.item()),
+            "loss_bc_kappa": float(loss_bc_kappa.item()),
+            "loss_bc_q": float(loss_bc_q.item()),
             "loss_norm": float(loss_norm.item()),
             "loss_integral_norm": float(loss_integral_norm.item()),
             "loss_phase": float(loss_phase.item()),

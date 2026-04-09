@@ -179,16 +179,33 @@ def pressure_ode_residual(
 
 def boundary_decay_loss(model, xi_left: torch.Tensor, xi_right: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     if getattr(model, "mode_representation", "cartesian") == "riccati":
-        pred_left = model(xi_left, alpha)
-        pred_right = model(xi_right, alpha)
-        ci = model.get_ci(alpha)
-        gamma_left, gamma_right = asymptotic_riccati_gammas(alpha, float(getattr(model, "mach", 0.5)), ci)
-        loss_left = (pred_left[:, 0:1] - gamma_left.real).pow(2) + (pred_left[:, 1:2] - gamma_left.imag).pow(2)
-        loss_right = (pred_right[:, 0:1] - gamma_right.real).pow(2) + (pred_right[:, 1:2] - gamma_right.imag).pow(2)
-        return torch.mean(loss_left + loss_right)
+        loss_kappa, loss_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha)
+        return loss_kappa + loss_q
     pred_left = model(xi_left, alpha)
     pred_right = model(xi_right, alpha)
     return pred_left.pow(2).mean() + pred_right.pow(2).mean()
+
+
+def riccati_boundary_loss_components(
+    model,
+    xi_left: torch.Tensor,
+    xi_right: torch.Tensor,
+    alpha: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    pred_left = model(xi_left, alpha)
+    pred_right = model(xi_right, alpha)
+    ci = model.get_ci(alpha)
+    gamma_left, gamma_right = asymptotic_riccati_gammas(alpha, float(getattr(model, "mach", 0.5)), ci)
+
+    loss_kappa = (
+        (pred_left[:, 0:1] - gamma_left.real).pow(2).mean()
+        + (pred_right[:, 0:1] - gamma_right.real).pow(2).mean()
+    )
+    loss_q = (
+        (pred_left[:, 1:2] - gamma_left.imag).pow(2).mean()
+        + (pred_right[:, 1:2] - gamma_right.imag).pow(2).mean()
+    )
+    return loss_kappa, loss_q
 
 
 def normalization_loss(

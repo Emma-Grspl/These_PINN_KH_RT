@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--focus-half-width", type=float, default=0.03)
+    parser.add_argument("--neutral-fraction", type=float, default=0.0)
+    parser.add_argument("--neutral-half-width", type=float, default=0.03)
     parser.add_argument("--error-threshold", type=float, default=0.01)
     parser.add_argument("--mode-error-threshold", type=float, default=0.12)
     parser.add_argument("--max-focus-points", type=int, default=8)
@@ -54,6 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-center-half-width", type=float, default=0.3)
     parser.add_argument("--w-pde", type=float, default=1.0)
     parser.add_argument("--w-bc", type=float, default=10.0)
+    parser.add_argument("--w-bc-kappa", type=float, default=10.0)
+    parser.add_argument("--w-bc-q", type=float, default=10.0)
     parser.add_argument("--w-norm", type=float, default=1.0)
     parser.add_argument("--w-integral-norm", type=float, default=1.0)
     parser.add_argument("--w-phase", type=float, default=1.0)
@@ -108,6 +112,8 @@ def main() -> None:
         checkpoint_every=args.checkpoint_every,
         focus_fraction=args.focus_fraction,
         focus_half_width=args.focus_half_width,
+        neutral_fraction=args.neutral_fraction,
+        neutral_half_width=args.neutral_half_width,
         error_threshold=args.error_threshold,
         mode_error_threshold=args.mode_error_threshold,
         max_focus_points=args.max_focus_points,
@@ -118,6 +124,8 @@ def main() -> None:
         mode_center_half_width=args.mode_center_half_width,
         w_pde=args.w_pde,
         w_bc=args.w_bc,
+        w_bc_kappa=args.w_bc_kappa,
+        w_bc_q=args.w_bc_q,
         w_norm=args.w_norm,
         w_integral_norm=args.w_integral_norm,
         w_phase=args.w_phase,
