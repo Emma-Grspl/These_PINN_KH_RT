@@ -49,4 +49,5 @@ srun python3 classical_solver/gep/build_supersonic_mode_database.py \
   --previous-weight 0.6 \
   --y-points 561 \
   --accepted-only \
+  --resume \
   --output-stem supersonic_pin15_xi090_mode_database

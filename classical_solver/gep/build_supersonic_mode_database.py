@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 import sys
 
@@ -61,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--previous-weight", type=float, default=0.6)
     parser.add_argument("--y-points", type=int, default=561)
     parser.add_argument("--accepted-only", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--output-stem", type=str, default="supersonic_mode_database")
     return parser
 
@@ -195,6 +197,79 @@ def plot_isolines(df: pd.DataFrame, png_path: Path) -> None:
     plt.close(fig)
 
 
+def write_checkpoint_payload(
+    *,
+    checkpoint_npz: Path,
+    checkpoint_meta: Path,
+    summary_df: pd.DataFrame,
+    modes_df: pd.DataFrame,
+    mode_fields: dict[str, list[np.ndarray]],
+    y_export: np.ndarray | None,
+) -> None:
+    summary_df.to_csv(checkpoint_meta, index=False)
+    payload: dict[str, np.ndarray] = {
+        "summary_alpha": summary_df["alpha"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_mach": summary_df["Mach"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_gep_cr": summary_df["gep_cr"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_gep_ci": summary_df["gep_ci"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_gep_omega_i": summary_df["gep_omega_i"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_distance_to_shooting": summary_df["distance_to_shooting"].to_numpy(dtype=np.float64) if not summary_df.empty else np.asarray([], dtype=np.float64),
+        "summary_success": summary_df["success"].to_numpy(dtype=bool) if not summary_df.empty else np.asarray([], dtype=bool),
+        "summary_accepted": summary_df["accepted"].to_numpy(dtype=bool) if not summary_df.empty else np.asarray([], dtype=bool),
+        "mode_alpha": modes_df["alpha"].to_numpy(dtype=np.float64) if not modes_df.empty else np.asarray([], dtype=np.float64),
+        "mode_mach": modes_df["Mach"].to_numpy(dtype=np.float64) if not modes_df.empty else np.asarray([], dtype=np.float64),
+        "mode_accepted": modes_df["accepted"].to_numpy(dtype=bool) if not modes_df.empty else np.asarray([], dtype=bool),
+        "mode_gep_cr": modes_df["gep_cr"].to_numpy(dtype=np.float64) if not modes_df.empty else np.asarray([], dtype=np.float64),
+        "mode_gep_ci": modes_df["gep_ci"].to_numpy(dtype=np.float64) if not modes_df.empty else np.asarray([], dtype=np.float64),
+        "mode_distance_to_shooting": modes_df["distance_to_shooting"].to_numpy(dtype=np.float64) if not modes_df.empty else np.asarray([], dtype=np.float64),
+    }
+    if y_export is not None:
+        payload["y"] = y_export.astype(np.float64)
+    if mode_fields["u"]:
+        payload["u"] = np.asarray(mode_fields["u"], dtype=np.complex128)
+        payload["v"] = np.asarray(mode_fields["v"], dtype=np.complex128)
+        payload["p"] = np.asarray(mode_fields["p"], dtype=np.complex128)
+        payload["rho"] = np.asarray(mode_fields["rho"], dtype=np.complex128)
+    np.savez_compressed(checkpoint_npz, **payload)
+
+
+def load_checkpoint_payload(
+    *,
+    checkpoint_npz: Path,
+    checkpoint_meta: Path,
+) -> tuple[list[dict], list[dict], dict[str, list[np.ndarray]], np.ndarray | None]:
+    summary_rows: list[dict] = []
+    mode_rows: list[dict] = []
+    mode_fields: dict[str, list[np.ndarray]] = {"u": [], "v": [], "p": [], "rho": []}
+    y_export: np.ndarray | None = None
+
+    if checkpoint_meta.exists():
+        summary_df = pd.read_csv(checkpoint_meta)
+        summary_rows = summary_df.to_dict(orient="records")
+
+    if checkpoint_npz.exists():
+        data = np.load(checkpoint_npz, allow_pickle=False)
+        if "y" in data:
+            y_export = data["y"]
+        if "mode_alpha" in data and data["mode_alpha"].size:
+            mode_rows = [
+                {
+                    "mode_index": idx,
+                    "alpha": float(data["mode_alpha"][idx]),
+                    "Mach": float(data["mode_mach"][idx]),
+                    "accepted": bool(data["mode_accepted"][idx]),
+                    "gep_cr": float(data["mode_gep_cr"][idx]),
+                    "gep_ci": float(data["mode_gep_ci"][idx]),
+                    "distance_to_shooting": float(data["mode_distance_to_shooting"][idx]),
+                }
+                for idx in range(data["mode_alpha"].shape[0])
+            ]
+            for key in ("u", "v", "p", "rho"):
+                if key in data:
+                    mode_fields[key] = [arr for arr in data[key]]
+    return summary_rows, mode_rows, mode_fields, y_export
+
+
 def main() -> None:
     args = build_parser().parse_args()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -202,21 +277,40 @@ def main() -> None:
     alphas = np.linspace(args.alpha_min, args.alpha_max, args.num_alpha)
     machs = np.linspace(args.mach_min, args.mach_max, args.num_mach)
 
-    summary_rows: list[dict] = []
-    mode_rows: list[dict] = []
-    mode_fields: dict[str, list[np.ndarray]] = {
-        "u": [],
-        "v": [],
-        "p": [],
-        "rho": [],
-    }
-    y_export: np.ndarray | None = None
+    summary_csv = OUTPUT_DIR / f"{args.output_stem}_surface.csv"
+    modes_csv = OUTPUT_DIR / f"{args.output_stem}_modes.csv"
+    modes_npz = OUTPUT_DIR / f"{args.output_stem}_modes.npz"
+    png_path = OUTPUT_DIR / f"{args.output_stem}_isolines.png"
+    checkpoint_meta = OUTPUT_DIR / f"{args.output_stem}_checkpoint_summary.csv"
+    checkpoint_npz = OUTPUT_DIR / f"{args.output_stem}_checkpoint_modes.npz"
+
+    if args.resume:
+        summary_rows, mode_rows, mode_fields, y_export = load_checkpoint_payload(
+            checkpoint_npz=checkpoint_npz,
+            checkpoint_meta=checkpoint_meta,
+        )
+    else:
+        summary_rows = []
+        mode_rows = []
+        mode_fields = {"u": [], "v": [], "p": [], "rho": []}
+        y_export = None
+
+    completed_pairs = {(round(float(row["alpha"]), 12), round(float(row["Mach"]), 12)) for row in summary_rows}
 
     for mach in machs:
         previous_gep: tuple[float, float] | None = None
         previous_signature: np.ndarray | None = None
 
         for idx, alpha in enumerate(alphas):
+            key = (round(float(alpha), 12), round(float(mach), 12))
+            if key in completed_pairs:
+                existing = [row for row in summary_rows if round(float(row["alpha"]), 12) == key[0] and round(float(row["Mach"]), 12) == key[1]]
+                if existing:
+                    row0 = existing[-1]
+                    if bool(row0.get("success", False)):
+                        previous_gep = (float(row0["gep_cr"]), float(row0["gep_ci"]))
+                continue
+
             shooting = Mstab17SupersonicSolver(alpha=float(alpha), Mach=float(mach)).solve(
                 cr_min=0.03,
                 cr_max=min(0.7, max(0.35, 0.5 * mach)),
@@ -260,10 +354,27 @@ def main() -> None:
             summary_row["shooting_omega_i"] = shooting.omega_i
             summary_row["shooting_spectral_success"] = shooting.spectral_success
             summary_rows.append(summary_row)
+            completed_pairs.add(key)
 
             if not chosen["success"] or solver is None or mode is None:
+                write_checkpoint_payload(
+                    checkpoint_npz=checkpoint_npz,
+                    checkpoint_meta=checkpoint_meta,
+                    summary_df=pd.DataFrame(summary_rows),
+                    modes_df=pd.DataFrame(mode_rows),
+                    mode_fields=mode_fields,
+                    y_export=y_export,
+                )
                 continue
             if args.accepted_only and not chosen["accepted"]:
+                write_checkpoint_payload(
+                    checkpoint_npz=checkpoint_npz,
+                    checkpoint_meta=checkpoint_meta,
+                    summary_df=pd.DataFrame(summary_rows),
+                    modes_df=pd.DataFrame(mode_rows),
+                    mode_fields=mode_fields,
+                    y_export=y_export,
+                )
                 continue
 
             if y_export is None:
@@ -291,14 +402,17 @@ def main() -> None:
 
             previous_gep = (chosen["gep_cr"], chosen["gep_ci"])
             previous_signature = mode.get("signature")
+            write_checkpoint_payload(
+                checkpoint_npz=checkpoint_npz,
+                checkpoint_meta=checkpoint_meta,
+                summary_df=pd.DataFrame(summary_rows),
+                modes_df=pd.DataFrame(mode_rows),
+                mode_fields=mode_fields,
+                y_export=y_export,
+            )
 
     summary_df = pd.DataFrame(summary_rows)
     modes_df = pd.DataFrame(mode_rows)
-
-    summary_csv = OUTPUT_DIR / f"{args.output_stem}_surface.csv"
-    modes_csv = OUTPUT_DIR / f"{args.output_stem}_modes.csv"
-    modes_npz = OUTPUT_DIR / f"{args.output_stem}_modes.npz"
-    png_path = OUTPUT_DIR / f"{args.output_stem}_isolines.png"
 
     summary_df.to_csv(summary_csv, index=False)
     modes_df.to_csv(modes_csv, index=False)
@@ -319,6 +433,14 @@ def main() -> None:
             "rho": np.asarray(mode_fields["rho"], dtype=np.complex128),
         }
         np.savez_compressed(modes_npz, **payload)
+
+    progress = {
+        "completed_points": int(len(summary_rows)),
+        "stored_modes": int(len(mode_rows)),
+        "total_points": int(len(alphas) * len(machs)),
+        "output_stem": args.output_stem,
+    }
+    (OUTPUT_DIR / f"{args.output_stem}_progress.json").write_text(json.dumps(progress, indent=2))
 
     print(summary_df.to_string(index=False))
     print(f"\nSurface CSV: {summary_csv}")
