@@ -69,6 +69,8 @@ class KHSubsonicFixedMachPINN(nn.Module):
         alpha_min: float,
         alpha_max: float,
         hidden_dim: int = 128,
+        mode_hidden_dim: int | None = None,
+        ci_hidden_dim: int | None = None,
         mode_depth: int = 4,
         ci_depth: int = 2,
         activation: str = "tanh",
@@ -87,20 +89,22 @@ class KHSubsonicFixedMachPINN(nn.Module):
         if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
+        mode_hidden_dim = int(mode_hidden_dim if mode_hidden_dim is not None else hidden_dim)
+        ci_hidden_dim = int(ci_hidden_dim if ci_hidden_dim is not None else max(hidden_dim // 2, 1))
 
         self.mode_fourier = FourierEncoding(2, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 4 * fourier_features if fourier_features > 0 else 2
         self.mode_net = build_mlp(
             mode_input_dim,
             2,
-            hidden_dim=hidden_dim,
+            hidden_dim=mode_hidden_dim,
             depth=mode_depth,
             activation=activation,
         )
         self.ci_net = build_mlp(
             1,
             1,
-            hidden_dim=hidden_dim // 2,
+            hidden_dim=ci_hidden_dim,
             depth=ci_depth,
             activation=activation,
         )

@@ -38,6 +38,8 @@ class KHSubsonicTrainingConfig:
     epochs: int = 5000
     learning_rate: float = 1e-3
     hidden_dim: int = 128
+    mode_hidden_dim: int | None = None
+    ci_hidden_dim: int | None = None
     mode_depth: int = 4
     ci_depth: int = 2
     activation: str = "tanh"
@@ -71,6 +73,7 @@ class KHSubsonicTrainingConfig:
     focus_fraction: float = 0.6
     focus_half_width: float = 0.03
     neutral_fraction: float = 0.0
+    ci_supervision_neutral_boost: float = 0.0
     neutral_half_width: float = 0.03
     error_threshold: float = 0.01
     mode_error_threshold: float = 0.12
@@ -373,6 +376,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         alpha_min=cfg.alpha_min,
         alpha_max=cfg.alpha_max,
         hidden_dim=cfg.hidden_dim,
+        mode_hidden_dim=cfg.mode_hidden_dim,
+        ci_hidden_dim=cfg.ci_hidden_dim,
         mode_depth=cfg.mode_depth,
         ci_depth=cfg.ci_depth,
         activation=cfg.activation,
@@ -509,6 +514,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             device=device,
         )
 
+        ci_supervision_neutral_fraction = min(1.0, stage_neutral_fraction + max(cfg.ci_supervision_neutral_boost, 0.0))
         alpha_supervision = sample_alpha_adaptive_batch(
             cfg.n_alpha_supervision,
             alpha_min=cfg.alpha_min,
@@ -516,7 +522,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
-            neutral_fraction=stage_neutral_fraction,
+            neutral_fraction=ci_supervision_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
             device=device,
@@ -630,6 +636,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),
+            "ci_supervision_neutral_fraction": float(ci_supervision_neutral_fraction),
             "stage2_started": int(stage2_started),
             "mapping_scale": float(model.get_mapping_scale().item()),
             "ci_mid": float(model.get_ci(torch.tensor([[0.5 * (cfg.alpha_min + cfg.alpha_max)]], device=device)).item()),

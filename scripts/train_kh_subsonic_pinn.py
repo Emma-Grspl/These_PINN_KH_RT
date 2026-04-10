@@ -23,6 +23,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=3000)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--mode-hidden-dim", type=int, default=None)
+    parser.add_argument("--ci-hidden-dim", type=int, default=None)
     parser.add_argument("--mode-depth", type=int, default=4)
     parser.add_argument("--ci-depth", type=int, default=2)
     parser.add_argument("--activation", type=str, default="tanh")
@@ -56,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--focus-half-width", type=float, default=0.03)
     parser.add_argument("--neutral-fraction", type=float, default=0.0)
+    parser.add_argument("--ci-supervision-neutral-boost", type=float, default=0.0)
     parser.add_argument("--neutral-half-width", type=float, default=0.03)
     parser.add_argument("--error-threshold", type=float, default=0.01)
     parser.add_argument("--mode-error-threshold", type=float, default=0.12)
@@ -102,6 +105,8 @@ def main() -> None:
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         hidden_dim=args.hidden_dim,
+        mode_hidden_dim=args.mode_hidden_dim,
+        ci_hidden_dim=args.ci_hidden_dim,
         mode_depth=args.mode_depth,
         ci_depth=args.ci_depth,
         activation=args.activation,
@@ -135,6 +140,7 @@ def main() -> None:
         focus_fraction=args.focus_fraction,
         focus_half_width=args.focus_half_width,
         neutral_fraction=args.neutral_fraction,
+        ci_supervision_neutral_boost=args.ci_supervision_neutral_boost,
         neutral_half_width=args.neutral_half_width,
         error_threshold=args.error_threshold,
         mode_error_threshold=args.mode_error_threshold,
