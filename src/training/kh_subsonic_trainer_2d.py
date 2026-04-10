@@ -33,6 +33,8 @@ class KHSubsonic2DTrainingConfig:
     epochs: int = 3000
     learning_rate: float = 1e-3
     hidden_dim: int = 128
+    mode_hidden_dim: int | None = None
+    ci_hidden_dim: int | None = None
     mode_depth: int = 4
     ci_depth: int = 2
     activation: str = "tanh"
@@ -50,6 +52,10 @@ class KHSubsonic2DTrainingConfig:
     n_audit_mach: int = 6
     audit_every: int = 100
     checkpoint_every: int = 500
+    separate_branch_optimizers: bool = False
+    detach_ci_in_mode_branch: bool = False
+    ci_branch_lr: float | None = None
+    mode_branch_lr: float | None = None
     focus_fraction: float = 0.6
     neutral_fraction: float = 0.2
     low_alpha_fraction: float = 0.15
@@ -126,6 +132,8 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         mach_min=cfg.mach_min,
         mach_max=cfg.mach_max,
         hidden_dim=cfg.hidden_dim,
+        mode_hidden_dim=cfg.mode_hidden_dim,
+        ci_hidden_dim=cfg.ci_hidden_dim,
         mode_depth=cfg.mode_depth,
         ci_depth=cfg.ci_depth,
         activation=cfg.activation,
@@ -136,6 +144,14 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         trainable_mapping_scale=cfg.trainable_mapping_scale,
     ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    ci_optimizer = None
+    mode_optimizer = None
+    if cfg.separate_branch_optimizers:
+        ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+        ci_param_ids = {id(param) for param in ci_params}
+        mode_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
+        ci_optimizer = optim.Adam(ci_params, lr=cfg.ci_branch_lr or cfg.learning_rate)
+        mode_optimizer = optim.Adam(mode_params, lr=cfg.mode_branch_lr or cfg.learning_rate)
     king = KingOfTheHill(model)
     focus_points: np.ndarray | None = None
 
@@ -215,22 +231,48 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         ci_target = reference_cache.interpolate(alpha_supervision, mach_supervision)
         ci_pred = model.get_ci(alpha_supervision, mach_supervision)
 
-        res_r, res_i, _ = pressure_ode_residual_2d(model, xi_interior, alpha_interior, mach_interior)
-        loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
-        loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
-        loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
-        loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
 
-        loss = (
-            cfg.w_pde * loss_pde
-            + cfg.w_bc * loss_bc
-            + cfg.w_norm * loss_norm
-            + cfg.w_phase * loss_phase
-            + cfg.w_ci_supervision * loss_ci
-        )
-        loss.backward()
-        optimizer.step()
+        if cfg.separate_branch_optimizers:
+            if ci_optimizer is not None and cfg.w_ci_supervision > 0.0:
+                ci_optimizer.zero_grad()
+                loss_ci_branch = cfg.w_ci_supervision * loss_ci
+                loss_ci_branch.backward()
+                ci_optimizer.step()
+            else:
+                loss_ci_branch = cfg.w_ci_supervision * loss_ci.detach()
+
+            mode_optimizer.zero_grad()
+            ci_for_mode = model.get_ci(alpha_interior, mach_interior).detach() if cfg.detach_ci_in_mode_branch else None
+            res_r, res_i, _ = pressure_ode_residual_2d(model, xi_interior, alpha_interior, mach_interior, ci_override=ci_for_mode)
+            loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
+            loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
+            loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            loss_mode = (
+                cfg.w_pde * loss_pde
+                + cfg.w_bc * loss_bc
+                + cfg.w_norm * loss_norm
+                + cfg.w_phase * loss_phase
+            )
+            loss_mode.backward()
+            mode_optimizer.step()
+            loss = loss_mode + loss_ci_branch
+        else:
+            res_r, res_i, _ = pressure_ode_residual_2d(model, xi_interior, alpha_interior, mach_interior)
+            loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
+            loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
+            loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            loss = (
+                cfg.w_pde * loss_pde
+                + cfg.w_bc * loss_bc
+                + cfg.w_norm * loss_norm
+                + cfg.w_phase * loss_phase
+                + cfg.w_ci_supervision * loss_ci
+            )
+            loss.backward()
+            optimizer.step()
 
         record = {
             "epoch": epoch,

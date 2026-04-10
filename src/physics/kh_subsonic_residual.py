@@ -281,6 +281,7 @@ def pressure_ode_residual_2d(
     xi: torch.Tensor,
     alpha: torch.Tensor,
     mach: torch.Tensor,
+    ci_override: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     if not xi.requires_grad:
         xi.requires_grad_(True)
@@ -306,7 +307,7 @@ def pressure_ode_residual_2d(
 
     u = base_velocity(y)
     du = base_velocity_derivative(y)
-    ci = model.get_ci(alpha, mach)
+    ci = ci_override if ci_override is not None else model.get_ci(alpha, mach)
 
     ur = u
     ui = -ci

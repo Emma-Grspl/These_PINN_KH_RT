@@ -24,6 +24,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--epochs", type=int, default=3000)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--hidden-dim", type=int, default=128)
+    parser.add_argument("--mode-hidden-dim", type=int, default=None)
+    parser.add_argument("--ci-hidden-dim", type=int, default=None)
     parser.add_argument("--mode-depth", type=int, default=4)
     parser.add_argument("--ci-depth", type=int, default=2)
     parser.add_argument("--activation", type=str, default="tanh")
@@ -41,6 +43,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-audit-mach", type=int, default=6)
     parser.add_argument("--audit-every", type=int, default=100)
     parser.add_argument("--checkpoint-every", type=int, default=500)
+    parser.add_argument("--separate-branch-optimizers", action="store_true")
+    parser.add_argument("--detach-ci-in-mode-branch", action="store_true")
+    parser.add_argument("--ci-branch-lr", type=float, default=None)
+    parser.add_argument("--mode-branch-lr", type=float, default=None)
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--neutral-fraction", type=float, default=0.2)
     parser.add_argument("--low-alpha-fraction", type=float, default=0.15)
@@ -70,6 +76,8 @@ def main() -> None:
         epochs=args.epochs,
         learning_rate=args.learning_rate,
         hidden_dim=args.hidden_dim,
+        mode_hidden_dim=args.mode_hidden_dim,
+        ci_hidden_dim=args.ci_hidden_dim,
         mode_depth=args.mode_depth,
         ci_depth=args.ci_depth,
         activation=args.activation,
@@ -87,6 +95,10 @@ def main() -> None:
         n_audit_mach=args.n_audit_mach,
         audit_every=args.audit_every,
         checkpoint_every=args.checkpoint_every,
+        separate_branch_optimizers=args.separate_branch_optimizers,
+        detach_ci_in_mode_branch=args.detach_ci_in_mode_branch,
+        ci_branch_lr=args.ci_branch_lr,
+        mode_branch_lr=args.mode_branch_lr,
         focus_fraction=args.focus_fraction,
         neutral_fraction=args.neutral_fraction,
         low_alpha_fraction=args.low_alpha_fraction,
@@ -107,6 +119,7 @@ def main() -> None:
     model, history = train_subsonic_2d_pinn(cfg)
     save_training_artifacts(model, history, cfg)
     print(f"Modele et historique enregistres dans {args.output_dir}")
+
 
 
 if __name__ == "__main__":
