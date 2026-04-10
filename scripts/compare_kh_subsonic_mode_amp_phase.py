@@ -54,6 +54,7 @@ def interp_complex(y_src: np.ndarray, f_src: np.ndarray, y_dst: np.ndarray) -> n
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Compare le mode de pression classique vs PINN en amplitude/phase.")
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--alpha", type=float, required=True)
     parser.add_argument("--mach", type=float, required=True)
     parser.add_argument("--n-points-classic", type=int, default=561)
@@ -84,7 +85,8 @@ def main() -> None:
 
     config = pd.read_csv(args.run_dir / "config.csv").iloc[0]
     model = build_pinn_model(config)
-    state_dict = torch.load(args.run_dir / "model_best.pt", map_location=device)
+    checkpoint_path = args.checkpoint if args.checkpoint is not None else args.run_dir / "model_best.pt"
+    state_dict = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()

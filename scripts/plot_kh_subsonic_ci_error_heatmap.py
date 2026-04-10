@@ -38,6 +38,7 @@ def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Trace c_i classique vs PINN avec bande heatmap d'erreur.")
     parser.add_argument("--run-dir", type=Path, required=True)
+    parser.add_argument("--checkpoint", type=Path, default=None)
     parser.add_argument("--num-alpha", type=int, default=81)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output", type=Path, required=True)
@@ -50,7 +51,8 @@ def main() -> None:
 
     config = pd.read_csv(args.run_dir / "config.csv").iloc[0]
     model = build_model_from_config(config)
-    state_dict = torch.load(args.run_dir / "model_best.pt", map_location=device)
+    checkpoint_path = args.checkpoint if args.checkpoint is not None else args.run_dir / "model_best.pt"
+    state_dict = torch.load(checkpoint_path, map_location=device)
     model.load_state_dict(state_dict)
     model.to(device)
     model.eval()
