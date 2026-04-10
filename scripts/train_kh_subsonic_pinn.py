@@ -44,6 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--checkpoint-every", type=int, default=500)
     parser.add_argument("--stage-split-epoch", type=int, default=0)
     parser.add_argument("--stage2-freeze-ci", action="store_true")
+    parser.add_argument("--stage2-ci-lr-scale", type=float, default=1.0)
     parser.add_argument("--stage1-w-ci-supervision", type=float, default=None)
     parser.add_argument("--stage2-w-ci-supervision", type=float, default=None)
     parser.add_argument("--stage1-neutral-fraction", type=float, default=None)
@@ -118,6 +119,7 @@ def main() -> None:
         checkpoint_every=args.checkpoint_every,
         stage_split_epoch=args.stage_split_epoch,
         stage2_freeze_ci=args.stage2_freeze_ci,
+        stage2_ci_lr_scale=args.stage2_ci_lr_scale,
         stage1_w_ci_supervision=args.stage1_w_ci_supervision,
         stage2_w_ci_supervision=args.stage2_w_ci_supervision,
         stage1_neutral_fraction=args.stage1_neutral_fraction,

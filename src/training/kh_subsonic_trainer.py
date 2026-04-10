@@ -59,6 +59,7 @@ class KHSubsonicTrainingConfig:
     checkpoint_every: int = 500
     stage_split_epoch: int = 0
     stage2_freeze_ci: bool = False
+    stage2_ci_lr_scale: float = 1.0
     stage1_w_ci_supervision: float | None = None
     stage2_w_ci_supervision: float | None = None
     stage1_neutral_fraction: float | None = None
@@ -397,6 +398,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     param.requires_grad_(False)
                 model.raw_ci_bias.requires_grad_(False)
                 optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=cfg.learning_rate)
+            elif cfg.stage2_ci_lr_scale != 1.0:
+                ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+                ci_param_ids = {id(param) for param in ci_params}
+                other_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
+                optimizer = optim.Adam(
+                    [
+                        {"params": other_params, "lr": cfg.learning_rate},
+                        {"params": ci_params, "lr": cfg.learning_rate * cfg.stage2_ci_lr_scale},
+                    ]
+                )
 
         stage_w_ci_supervision = cfg.w_ci_supervision
         if not stage2_started and cfg.stage1_w_ci_supervision is not None:
