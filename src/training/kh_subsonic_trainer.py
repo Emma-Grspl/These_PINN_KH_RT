@@ -60,6 +60,10 @@ class KHSubsonicTrainingConfig:
     stage_split_epoch: int = 0
     stage2_freeze_ci: bool = False
     stage2_ci_lr_scale: float = 1.0
+    separate_branch_optimizers: bool = False
+    detach_ci_in_mode_branch: bool = False
+    ci_branch_lr: float | None = None
+    mode_branch_lr: float | None = None
     stage1_w_ci_supervision: float | None = None
     stage2_w_ci_supervision: float | None = None
     stage1_neutral_fraction: float | None = None
@@ -382,6 +386,14 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     ).to(device)
     model.mach = float(cfg.mach)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    ci_optimizer = None
+    mode_optimizer = None
+    if cfg.separate_branch_optimizers:
+        ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+        ci_param_ids = {id(param) for param in ci_params}
+        mode_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
+        ci_optimizer = optim.Adam(ci_params, lr=cfg.ci_branch_lr or cfg.learning_rate)
+        mode_optimizer = optim.Adam(mode_params, lr=cfg.mode_branch_lr or cfg.learning_rate)
     king = KingOfTheHill(model)
     focus_alphas: np.ndarray | None = None
 
@@ -397,17 +409,27 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 for param in model.ci_net.parameters():
                     param.requires_grad_(False)
                 model.raw_ci_bias.requires_grad_(False)
-                optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=cfg.learning_rate)
+                if cfg.separate_branch_optimizers:
+                    mode_params = [p for p in model.parameters() if p.requires_grad]
+                    mode_optimizer = optim.Adam(mode_params, lr=cfg.mode_branch_lr or cfg.learning_rate)
+                    ci_optimizer = None
+                else:
+                    optimizer = optim.Adam([p for p in model.parameters() if p.requires_grad], lr=cfg.learning_rate)
             elif cfg.stage2_ci_lr_scale != 1.0:
-                ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
-                ci_param_ids = {id(param) for param in ci_params}
-                other_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
-                optimizer = optim.Adam(
-                    [
-                        {"params": other_params, "lr": cfg.learning_rate},
-                        {"params": ci_params, "lr": cfg.learning_rate * cfg.stage2_ci_lr_scale},
-                    ]
-                )
+                if cfg.separate_branch_optimizers:
+                    if ci_optimizer is not None:
+                        for group in ci_optimizer.param_groups:
+                            group["lr"] = (cfg.ci_branch_lr or cfg.learning_rate) * cfg.stage2_ci_lr_scale
+                else:
+                    ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+                    ci_param_ids = {id(param) for param in ci_params}
+                    other_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
+                    optimizer = optim.Adam(
+                        [
+                            {"params": other_params, "lr": cfg.learning_rate},
+                            {"params": ci_params, "lr": cfg.learning_rate * cfg.stage2_ci_lr_scale},
+                        ]
+                    )
 
         stage_w_ci_supervision = cfg.w_ci_supervision
         if not stage2_started and cfg.stage1_w_ci_supervision is not None:
@@ -501,47 +523,95 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
         ci_target = reference_cache.interpolate(alpha_supervision)
         ci_pred = model.get_ci(alpha_supervision)
-
-        res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
-        loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
-        loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
+        loss_ci = torch.mean((ci_pred - ci_target).pow(2))
         loss_bc_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_bc_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-        if model.mode_representation == "riccati":
-            loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
-            loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
-            loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_integral_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_phase = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_peak_slope = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_peak_curvature = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_loc_center = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-            loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
-        else:
-            if cfg.anchor_strategy in {"point", "max", "point_max"}:
-                loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
-            else:
-                loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
-            loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
-            loss_phase = phase_loss(model, xi_ref, alpha_anchor)
-            loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
-            loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
-        loss_ci = torch.mean((ci_pred - ci_target).pow(2))
+        loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_integral_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_phase = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_peak_slope = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_peak_curvature = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_loc_center = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
-        loss = (
-            cfg.w_pde * loss_pde
-            + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
-            + cfg.w_norm * loss_norm
-            + cfg.w_integral_norm * loss_integral_norm
-            + cfg.w_phase * loss_phase
-            + cfg.w_peak_slope * loss_peak_slope
-            + cfg.w_peak_curvature * loss_peak_curvature
-            + cfg.w_loc_center * loss_loc_center
-            + cfg.w_loc_spread * loss_loc_spread
-            + stage_w_ci_supervision * loss_ci
-        )
-        loss.backward()
-        optimizer.step()
+        if cfg.separate_branch_optimizers:
+            if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
+                ci_optimizer.zero_grad()
+                loss_ci_branch = stage_w_ci_supervision * loss_ci
+                loss_ci_branch.backward()
+                ci_optimizer.step()
+            else:
+                loss_ci_branch = stage_w_ci_supervision * loss_ci.detach()
+
+            mode_optimizer.zero_grad()
+            ci_for_mode = model.get_ci(alpha_interior).detach() if cfg.detach_ci_in_mode_branch else None
+            ci_for_boundary = model.get_ci(alpha_boundary).detach() if cfg.detach_ci_in_mode_branch else None
+            res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach, ci_override=ci_for_mode)
+            loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
+            if model.mode_representation == "riccati":
+                loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(
+                    model,
+                    xi_left,
+                    xi_right,
+                    alpha_boundary,
+                    ci_override=ci_for_boundary,
+                )
+                loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+            else:
+                loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
+                if cfg.anchor_strategy in {"point", "max", "point_max"}:
+                    loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
+                else:
+                    loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
+                loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
+                loss_phase = phase_loss(model, xi_ref, alpha_anchor)
+                loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
+                loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
+            loss_mode = (
+                cfg.w_pde * loss_pde
+                + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
+                + cfg.w_norm * loss_norm
+                + cfg.w_integral_norm * loss_integral_norm
+                + cfg.w_phase * loss_phase
+                + cfg.w_peak_slope * loss_peak_slope
+                + cfg.w_peak_curvature * loss_peak_curvature
+                + cfg.w_loc_center * loss_loc_center
+                + cfg.w_loc_spread * loss_loc_spread
+            )
+            loss_mode.backward()
+            mode_optimizer.step()
+            loss = loss_mode + loss_ci_branch
+        else:
+            res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
+            loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
+            loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
+            if model.mode_representation == "riccati":
+                loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
+                loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+            else:
+                if cfg.anchor_strategy in {"point", "max", "point_max"}:
+                    loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
+                else:
+                    loss_norm = integral_normalization_loss(model, xi_ref, alpha_anchor)
+                loss_integral_norm = integral_normalization_loss(model, xi_norm, alpha_norm)
+                loss_phase = phase_loss(model, xi_ref, alpha_anchor)
+                loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
+                loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
+            loss = (
+                cfg.w_pde * loss_pde
+                + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
+                + cfg.w_norm * loss_norm
+                + cfg.w_integral_norm * loss_integral_norm
+                + cfg.w_phase * loss_phase
+                + cfg.w_peak_slope * loss_peak_slope
+                + cfg.w_peak_curvature * loss_peak_curvature
+                + cfg.w_loc_center * loss_loc_center
+                + cfg.w_loc_spread * loss_loc_spread
+                + stage_w_ci_supervision * loss_ci
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
         record = {
             "epoch": epoch,

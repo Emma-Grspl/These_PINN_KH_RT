@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stage-split-epoch", type=int, default=0)
     parser.add_argument("--stage2-freeze-ci", action="store_true")
     parser.add_argument("--stage2-ci-lr-scale", type=float, default=1.0)
+    parser.add_argument("--separate-branch-optimizers", action="store_true")
+    parser.add_argument("--detach-ci-in-mode-branch", action="store_true")
+    parser.add_argument("--ci-branch-lr", type=float, default=None)
+    parser.add_argument("--mode-branch-lr", type=float, default=None)
     parser.add_argument("--stage1-w-ci-supervision", type=float, default=None)
     parser.add_argument("--stage2-w-ci-supervision", type=float, default=None)
     parser.add_argument("--stage1-neutral-fraction", type=float, default=None)
@@ -120,6 +124,10 @@ def main() -> None:
         stage_split_epoch=args.stage_split_epoch,
         stage2_freeze_ci=args.stage2_freeze_ci,
         stage2_ci_lr_scale=args.stage2_ci_lr_scale,
+        separate_branch_optimizers=args.separate_branch_optimizers,
+        detach_ci_in_mode_branch=args.detach_ci_in_mode_branch,
+        ci_branch_lr=args.ci_branch_lr,
+        mode_branch_lr=args.mode_branch_lr,
         stage1_w_ci_supervision=args.stage1_w_ci_supervision,
         stage2_w_ci_supervision=args.stage2_w_ci_supervision,
         stage1_neutral_fraction=args.stage1_neutral_fraction,

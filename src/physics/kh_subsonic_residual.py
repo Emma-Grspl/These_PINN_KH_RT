@@ -103,6 +103,8 @@ def pressure_ode_residual(
     xi: torch.Tensor,
     alpha: torch.Tensor,
     mach: float,
+    *,
+    ci_override: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
     Equation modale de pression en subsonique, avec c = i c_i(alpha).
@@ -127,7 +129,7 @@ def pressure_ode_residual(
 
         u = base_velocity(y)
         du = base_velocity_derivative(y)
-        ci = model.get_ci(alpha)
+        ci = model.get_ci(alpha) if ci_override is None else ci_override
 
         gamma = torch.complex(kappa, q)
         c = torch.complex(torch.zeros_like(ci), ci)
@@ -165,7 +167,7 @@ def pressure_ode_residual(
 
     u = base_velocity(y)
     du = base_velocity_derivative(y)
-    ci = model.get_ci(alpha)
+    ci = model.get_ci(alpha) if ci_override is None else ci_override
 
     ur = u
     ui = -ci
@@ -191,10 +193,12 @@ def riccati_boundary_loss_components(
     xi_left: torch.Tensor,
     xi_right: torch.Tensor,
     alpha: torch.Tensor,
+    *,
+    ci_override: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     pred_left = model(xi_left, alpha)
     pred_right = model(xi_right, alpha)
-    ci = model.get_ci(alpha)
+    ci = model.get_ci(alpha) if ci_override is None else ci_override
     gamma_left, gamma_right = asymptotic_riccati_gammas(alpha, float(getattr(model, "mach", 0.5)), ci)
 
     loss_kappa = (
