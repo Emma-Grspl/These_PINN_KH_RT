@@ -18,10 +18,14 @@ from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
 
 
 def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
+    mode_hidden_dim = None if "mode_hidden_dim" not in config.index or pd.isna(config["mode_hidden_dim"]) else int(config["mode_hidden_dim"])
+    ci_hidden_dim = None if "ci_hidden_dim" not in config.index or pd.isna(config["ci_hidden_dim"]) else int(config["ci_hidden_dim"])
     return KHSubsonicFixedMachPINN(
         alpha_min=float(config["alpha_min"]),
         alpha_max=float(config["alpha_max"]),
         hidden_dim=int(config["hidden_dim"]),
+        mode_hidden_dim=mode_hidden_dim,
+        ci_hidden_dim=ci_hidden_dim,
         mode_depth=int(config["mode_depth"]),
         ci_depth=int(config["ci_depth"]),
         activation=str(config["activation"]),
