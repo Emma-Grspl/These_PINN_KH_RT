@@ -50,10 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--focus-fraction", type=float, default=0.6)
     parser.add_argument("--neutral-fraction", type=float, default=0.2)
     parser.add_argument("--low-alpha-fraction", type=float, default=0.15)
+    parser.add_argument("--upper-corner-fraction", type=float, default=0.0)
+    parser.add_argument("--lower-corner-fraction", type=float, default=0.0)
     parser.add_argument("--focus-alpha-half-width", type=float, default=0.03)
     parser.add_argument("--focus-mach-half-width", type=float, default=0.05)
     parser.add_argument("--neutral-band-ratio", type=float, default=0.15)
     parser.add_argument("--low-alpha-band-width", type=float, default=0.06)
+    parser.add_argument("--upper-alpha-min", type=float, default=0.75)
+    parser.add_argument("--upper-mach-min", type=float, default=0.40)
+    parser.add_argument("--lower-alpha-max", type=float, default=0.25)
+    parser.add_argument("--lower-mach-max", type=float, default=0.05)
     parser.add_argument("--error-threshold", type=float, default=0.02)
     parser.add_argument("--max-focus-points", type=int, default=12)
     parser.add_argument("--w-pde", type=float, default=1.0)
@@ -102,10 +108,16 @@ def main() -> None:
         focus_fraction=args.focus_fraction,
         neutral_fraction=args.neutral_fraction,
         low_alpha_fraction=args.low_alpha_fraction,
+        upper_corner_fraction=args.upper_corner_fraction,
+        lower_corner_fraction=args.lower_corner_fraction,
         focus_alpha_half_width=args.focus_alpha_half_width,
         focus_mach_half_width=args.focus_mach_half_width,
         neutral_band_ratio=args.neutral_band_ratio,
         low_alpha_band_width=args.low_alpha_band_width,
+        upper_alpha_min=args.upper_alpha_min,
+        upper_mach_min=args.upper_mach_min,
+        lower_alpha_max=args.lower_alpha_max,
+        lower_mach_max=args.lower_mach_max,
         error_threshold=args.error_threshold,
         max_focus_points=args.max_focus_points,
         w_pde=args.w_pde,

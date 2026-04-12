@@ -239,10 +239,16 @@ def sample_alpha_mach_adaptive_neutral_batch(
     focus_fraction: float,
     neutral_fraction: float,
     low_alpha_fraction: float,
+    upper_corner_fraction: float,
+    lower_corner_fraction: float,
     alpha_half_width: float,
     mach_half_width: float,
     neutral_band_ratio: float,
     low_alpha_band_width: float,
+    upper_alpha_min: float,
+    upper_mach_min: float,
+    lower_alpha_max: float,
+    lower_mach_max: float,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     n_focus = int(round(focus_fraction * n_points))
@@ -256,7 +262,13 @@ def sample_alpha_mach_adaptive_neutral_batch(
     remaining -= n_neutral
     n_low_alpha = int(round(low_alpha_fraction * n_points))
     n_low_alpha = min(max(n_low_alpha, 0), remaining)
-    n_uniform = n_points - n_focus - n_neutral - n_low_alpha
+    remaining -= n_low_alpha
+    n_upper_corner = int(round(upper_corner_fraction * n_points))
+    n_upper_corner = min(max(n_upper_corner, 0), remaining)
+    remaining -= n_upper_corner
+    n_lower_corner = int(round(lower_corner_fraction * n_points))
+    n_lower_corner = min(max(n_lower_corner, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral - n_low_alpha - n_upper_corner - n_lower_corner
 
     alpha_chunks: list[torch.Tensor] = []
     mach_chunks: list[torch.Tensor] = []
@@ -295,6 +307,38 @@ def sample_alpha_mach_adaptive_neutral_batch(
         )
         alpha_chunks.append(alpha_low_edge)
         mach_chunks.append(mach_low)
+
+    if n_upper_corner > 0:
+        alpha_upper = sample_alpha_batch(
+            n_upper_corner,
+            alpha_min=max(alpha_min, upper_alpha_min),
+            alpha_max=alpha_max,
+            device=device,
+        )
+        mach_upper = sample_mach_batch(
+            n_upper_corner,
+            mach_min=max(mach_min, upper_mach_min),
+            mach_max=mach_max,
+            device=device,
+        )
+        alpha_chunks.append(alpha_upper)
+        mach_chunks.append(mach_upper)
+
+    if n_lower_corner > 0:
+        alpha_lower = sample_alpha_batch(
+            n_lower_corner,
+            alpha_min=alpha_min,
+            alpha_max=min(alpha_max, lower_alpha_max),
+            device=device,
+        )
+        mach_lower = sample_mach_batch(
+            n_lower_corner,
+            mach_min=mach_min,
+            mach_max=min(mach_max, lower_mach_max),
+            device=device,
+        )
+        alpha_chunks.append(alpha_lower)
+        mach_chunks.append(mach_lower)
 
     alpha = torch.cat(alpha_chunks, dim=0)
     mach = torch.cat(mach_chunks, dim=0)

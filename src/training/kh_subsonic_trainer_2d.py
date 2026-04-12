@@ -59,10 +59,16 @@ class KHSubsonic2DTrainingConfig:
     focus_fraction: float = 0.6
     neutral_fraction: float = 0.2
     low_alpha_fraction: float = 0.15
+    upper_corner_fraction: float = 0.0
+    lower_corner_fraction: float = 0.0
     focus_alpha_half_width: float = 0.03
     focus_mach_half_width: float = 0.05
     neutral_band_ratio: float = 0.15
     low_alpha_band_width: float = 0.06
+    upper_alpha_min: float = 0.75
+    upper_mach_min: float = 0.40
+    lower_alpha_max: float = 0.25
+    lower_mach_max: float = 0.05
     error_threshold: float = 0.02
     max_focus_points: int = 12
     w_pde: float = 1.0
@@ -171,10 +177,16 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
             low_alpha_fraction=cfg.low_alpha_fraction,
+            upper_corner_fraction=cfg.upper_corner_fraction,
+            lower_corner_fraction=cfg.lower_corner_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
             low_alpha_band_width=cfg.low_alpha_band_width,
+            upper_alpha_min=cfg.upper_alpha_min,
+            upper_mach_min=cfg.upper_mach_min,
+            lower_alpha_max=cfg.lower_alpha_max,
+            lower_mach_max=cfg.lower_mach_max,
             device=device,
         )
         xi_left, xi_right = sample_boundary_points(cfg.n_boundary, device=device)
@@ -188,10 +200,16 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
             low_alpha_fraction=cfg.low_alpha_fraction,
+            upper_corner_fraction=cfg.upper_corner_fraction,
+            lower_corner_fraction=cfg.lower_corner_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
             low_alpha_band_width=cfg.low_alpha_band_width,
+            upper_alpha_min=cfg.upper_alpha_min,
+            upper_mach_min=cfg.upper_mach_min,
+            lower_alpha_max=cfg.lower_alpha_max,
+            lower_mach_max=cfg.lower_mach_max,
             device=device,
         )
         xi_ref = reference_point(device=device)
@@ -205,10 +223,16 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
             low_alpha_fraction=cfg.low_alpha_fraction,
+            upper_corner_fraction=cfg.upper_corner_fraction,
+            lower_corner_fraction=cfg.lower_corner_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
             low_alpha_band_width=cfg.low_alpha_band_width,
+            upper_alpha_min=cfg.upper_alpha_min,
+            upper_mach_min=cfg.upper_mach_min,
+            lower_alpha_max=cfg.lower_alpha_max,
+            lower_mach_max=cfg.lower_mach_max,
             device=device,
         )
         alpha_supervision, mach_supervision = sample_alpha_mach_adaptive_neutral_batch(
@@ -221,10 +245,16 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_fraction=cfg.focus_fraction,
             neutral_fraction=cfg.neutral_fraction,
             low_alpha_fraction=cfg.low_alpha_fraction,
+            upper_corner_fraction=cfg.upper_corner_fraction,
+            lower_corner_fraction=cfg.lower_corner_fraction,
             alpha_half_width=cfg.focus_alpha_half_width,
             mach_half_width=cfg.focus_mach_half_width,
             neutral_band_ratio=cfg.neutral_band_ratio,
             low_alpha_band_width=cfg.low_alpha_band_width,
+            upper_alpha_min=cfg.upper_alpha_min,
+            upper_mach_min=cfg.upper_mach_min,
+            lower_alpha_max=cfg.lower_alpha_max,
+            lower_mach_max=cfg.lower_mach_max,
             device=device,
         )
 
