@@ -49,9 +49,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mach-min", type=float, required=True)
     parser.add_argument("--mach-max", type=float, required=True)
     parser.add_argument("--num-mach", type=int, default=21)
+    parser.add_argument("--mach-values", type=float, nargs="+", default=None)
     parser.add_argument("--alpha-min", type=float, required=True)
     parser.add_argument("--alpha-max", type=float, required=True)
     parser.add_argument("--num-alpha", type=int, default=21)
+    parser.add_argument("--alpha-values", type=float, nargs="+", default=None)
     parser.add_argument("--n-values", type=int, nargs="+", default=[561])
     parser.add_argument("--mapping-kind", type=str, choices=["pin", "cubic"], default="pin")
     parser.add_argument("--mapping-scale", type=float, default=1.5)
@@ -270,12 +272,18 @@ def load_checkpoint_payload(
     return summary_rows, mode_rows, mode_fields, y_export
 
 
-def main() -> None:
-    args = build_parser().parse_args()
+def run_supersonic_mode_database(args: argparse.Namespace) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    alphas = np.linspace(args.alpha_min, args.alpha_max, args.num_alpha)
-    machs = np.linspace(args.mach_min, args.mach_max, args.num_mach)
+    if args.alpha_values:
+        alphas = np.asarray(sorted(set(float(v) for v in args.alpha_values)), dtype=float)
+    else:
+        alphas = np.linspace(args.alpha_min, args.alpha_max, args.num_alpha)
+
+    if args.mach_values:
+        machs = np.asarray(sorted(set(float(v) for v in args.mach_values)), dtype=float)
+    else:
+        machs = np.linspace(args.mach_min, args.mach_max, args.num_mach)
 
     summary_csv = OUTPUT_DIR / f"{args.output_stem}_surface.csv"
     modes_csv = OUTPUT_DIR / f"{args.output_stem}_modes.csv"
@@ -448,6 +456,11 @@ def main() -> None:
     if y_export is not None and mode_rows:
         print(f"Modes NPZ: {modes_npz}")
     print(f"Isoline figure: {png_path}")
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    run_supersonic_mode_database(args)
 
 
 if __name__ == "__main__":
