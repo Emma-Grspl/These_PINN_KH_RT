@@ -98,6 +98,53 @@ def reconstruct_pressure_from_riccati(
     return pr, pi, y
 
 
+def reconstruct_pressure_from_riccati_2d(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    mach: torch.Tensor,
+    *,
+    anchor_xi: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    outputs = model(xi, alpha, mach)
+    kappa = outputs[:, 0:1]
+    q = outputs[:, 1:2]
+
+    mapping_scale = model.get_mapping_scale()
+    y = xi_to_y(xi, mapping_scale)
+
+    order = torch.argsort(y[:, 0])
+    y_sorted = y[order, 0]
+    kappa_sorted = kappa[order, 0]
+    q_sorted = q[order, 0]
+
+    anchor_y = xi_to_y(torch.tensor([[anchor_xi]], dtype=xi.dtype, device=xi.device), mapping_scale)[0, 0]
+    anchor_index = int(torch.argmin(torch.abs(y_sorted - anchor_y)).item())
+
+    ln_amp_sorted = torch.zeros_like(y_sorted)
+    phi_sorted = torch.zeros_like(y_sorted)
+
+    for idx in range(anchor_index + 1, y_sorted.shape[0]):
+        dy = y_sorted[idx] - y_sorted[idx - 1]
+        ln_amp_sorted[idx] = ln_amp_sorted[idx - 1] + 0.5 * (kappa_sorted[idx] + kappa_sorted[idx - 1]) * dy
+        phi_sorted[idx] = phi_sorted[idx - 1] + 0.5 * (q_sorted[idx] + q_sorted[idx - 1]) * dy
+
+    for idx in range(anchor_index - 1, -1, -1):
+        dy = y_sorted[idx + 1] - y_sorted[idx]
+        ln_amp_sorted[idx] = ln_amp_sorted[idx + 1] - 0.5 * (kappa_sorted[idx] + kappa_sorted[idx + 1]) * dy
+        phi_sorted[idx] = phi_sorted[idx + 1] - 0.5 * (q_sorted[idx] + q_sorted[idx + 1]) * dy
+
+    amp_sorted = torch.exp(torch.clamp(ln_amp_sorted, min=-20.0, max=20.0))
+    pr_sorted = amp_sorted * torch.cos(phi_sorted)
+    pi_sorted = amp_sorted * torch.sin(phi_sorted)
+
+    inverse = torch.empty_like(order)
+    inverse[order] = torch.arange(order.shape[0], device=order.device)
+    pr = pr_sorted[inverse].view(-1, 1)
+    pi = pi_sorted[inverse].view(-1, 1)
+    return pr, pi, y
+
+
 def pressure_ode_residual(
     model,
     xi: torch.Tensor,
@@ -286,6 +333,40 @@ def pressure_ode_residual_2d(
     if not xi.requires_grad:
         xi.requires_grad_(True)
 
+    if getattr(model, "mode_representation", "cartesian") == "riccati":
+        outputs = model(xi, alpha, mach)
+        kappa = outputs[:, 0:1]
+        q = outputs[:, 1:2]
+
+        kappa_xi = _differentiate(kappa, xi)
+        q_xi = _differentiate(q, xi)
+
+        mapping_scale = model.get_mapping_scale()
+        y = xi_to_y(xi, mapping_scale)
+        y_xi = dy_dxi(xi, mapping_scale)
+
+        kappa_y = kappa_xi / y_xi
+        q_y = q_xi / y_xi
+
+        u = base_velocity(y)
+        du = base_velocity_derivative(y)
+        ci = ci_override if ci_override is not None else model.get_ci(alpha, mach)
+
+        gamma = torch.complex(kappa, q)
+        c = torch.complex(torch.zeros_like(ci), ci)
+        u_complex = torch.complex(u, torch.zeros_like(u))
+        du_complex = torch.complex(du, torch.zeros_like(du))
+        alpha_complex = torch.complex(alpha, torch.zeros_like(alpha))
+        mach_c = torch.complex(mach, torch.zeros_like(mach))
+
+        u_diff = u_complex - c
+        p_term = -2.0 * du_complex / u_diff
+        r_term = 1.0 - mach_c.pow(2) * (u_diff**2)
+        gamma_rhs = -(gamma**2) - p_term * gamma + (alpha_complex**2) * r_term
+        gamma_y = torch.complex(kappa_y, q_y)
+        residual = gamma_y - gamma_rhs
+        return residual.real, residual.imag, y
+
     outputs = model(xi, alpha, mach)
     p_r = outputs[:, 0:1]
     p_i = outputs[:, 1:2]
@@ -323,6 +404,41 @@ def boundary_decay_loss_2d(model, xi_left: torch.Tensor, xi_right: torch.Tensor,
     pred_left = model(xi_left, alpha, mach)
     pred_right = model(xi_right, alpha, mach)
     return pred_left.pow(2).mean() + pred_right.pow(2).mean()
+
+
+def riccati_boundary_loss_components_2d(
+    model,
+    xi_left: torch.Tensor,
+    xi_right: torch.Tensor,
+    alpha: torch.Tensor,
+    mach: torch.Tensor,
+    *,
+    ci_override: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    pred_left = model(xi_left, alpha, mach)
+    pred_right = model(xi_right, alpha, mach)
+    ci = ci_override if ci_override is not None else model.get_ci(alpha, mach)
+
+    one = torch.ones_like(ci)
+    c = torch.complex(torch.zeros_like(ci), ci)
+    alpha_c = torch.complex(alpha, torch.zeros_like(alpha))
+    mach_c = torch.complex(mach, torch.zeros_like(mach))
+
+    r_inf_left = one - mach_c.pow(2) * ((-one - c) ** 2)
+    r_inf_right = one - mach_c.pow(2) * ((one - c) ** 2)
+
+    gamma_left = alpha_c * _principal_sqrt_torch(r_inf_left)
+    gamma_right = -alpha_c * _principal_sqrt_torch(r_inf_right)
+
+    loss_kappa = (
+        (pred_left[:, 0:1] - gamma_left.real).pow(2).mean()
+        + (pred_right[:, 0:1] - gamma_right.real).pow(2).mean()
+    )
+    loss_q = (
+        (pred_left[:, 1:2] - gamma_left.imag).pow(2).mean()
+        + (pred_right[:, 1:2] - gamma_right.imag).pow(2).mean()
+    )
+    return loss_kappa, loss_q
 
 
 def normalization_loss_2d(

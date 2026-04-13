@@ -64,9 +64,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-focus-points", type=int, default=12)
     parser.add_argument("--w-pde", type=float, default=1.0)
     parser.add_argument("--w-bc", type=float, default=10.0)
+    parser.add_argument("--w-bc-kappa", type=float, default=10.0)
+    parser.add_argument("--w-bc-q", type=float, default=10.0)
     parser.add_argument("--w-norm", type=float, default=1.0)
     parser.add_argument("--w-phase", type=float, default=1.0)
     parser.add_argument("--w-ci-supervision", type=float, default=5.0)
+    parser.add_argument("--mode-representation", type=str, default="cartesian", choices=["cartesian", "riccati"])
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_2d_local"))
     return parser
@@ -122,9 +125,12 @@ def main() -> None:
         max_focus_points=args.max_focus_points,
         w_pde=args.w_pde,
         w_bc=args.w_bc,
+        w_bc_kappa=args.w_bc_kappa,
+        w_bc_q=args.w_bc_q,
         w_norm=args.w_norm,
         w_phase=args.w_phase,
         w_ci_supervision=args.w_ci_supervision,
+        mode_representation=args.mode_representation,
         output_dir=str(args.output_dir),
         device=args.device,
     )

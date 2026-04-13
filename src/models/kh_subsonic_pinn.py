@@ -197,12 +197,16 @@ class KHSubsonicMultiMachPINN(nn.Module):
         initial_ci: float = 0.3,
         mapping_scale: float = 3.0,
         trainable_mapping_scale: bool = False,
+        mode_representation: str = "cartesian",
     ):
         super().__init__()
         self.alpha_min = float(alpha_min)
         self.alpha_max = float(alpha_max)
         self.mach_min = float(mach_min)
         self.mach_max = float(mach_max)
+        if mode_representation not in {"cartesian", "riccati"}:
+            raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
+        self.mode_representation = str(mode_representation)
         mode_hidden_dim = int(mode_hidden_dim if mode_hidden_dim is not None else hidden_dim)
         ci_hidden_dim = int(ci_hidden_dim if ci_hidden_dim is not None else max(hidden_dim // 2, 1))
 
@@ -247,7 +251,12 @@ class KHSubsonicMultiMachPINN(nn.Module):
         return self.mode_fourier(inputs)
 
     def forward(self, xi: torch.Tensor, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
-        return self.mode_net(self.encode_mode_inputs(xi, alpha, mach))
+        raw_outputs = self.mode_net(self.encode_mode_inputs(xi, alpha, mach))
+        if self.mode_representation == "riccati":
+            kappa = raw_outputs[:, 0:1]
+            q = raw_outputs[:, 1:2]
+            return torch.cat([kappa, q], dim=-1)
+        return raw_outputs
 
     def get_ci(self, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
         inputs = torch.cat([self.normalize_alpha(alpha), self.normalize_mach(mach)], dim=-1)

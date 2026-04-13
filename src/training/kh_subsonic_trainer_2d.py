@@ -21,6 +21,7 @@ from src.physics.kh_subsonic_residual import (
     normalization_loss_2d,
     phase_loss_2d,
     pressure_ode_residual_2d,
+    riccati_boundary_loss_components_2d,
 )
 
 
@@ -73,9 +74,12 @@ class KHSubsonic2DTrainingConfig:
     max_focus_points: int = 12
     w_pde: float = 1.0
     w_bc: float = 10.0
+    w_bc_kappa: float = 10.0
+    w_bc_q: float = 10.0
     w_norm: float = 1.0
     w_phase: float = 1.0
     w_ci_supervision: float = 5.0
+    mode_representation: str = "cartesian"
     output_dir: str = "model_saved/kh_subsonic_2d_local"
     device: str = "cpu"
 
@@ -148,6 +152,7 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         initial_ci=cfg.initial_ci,
         mapping_scale=cfg.mapping_scale,
         trainable_mapping_scale=cfg.trainable_mapping_scale,
+        mode_representation=cfg.mode_representation,
     ).to(device)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
     ci_optimizer = None
@@ -262,6 +267,10 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         ci_pred = model.get_ci(alpha_supervision, mach_supervision)
 
         loss_ci = torch.mean((ci_pred - ci_target).pow(2))
+        loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_phase = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_bc_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_bc_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and cfg.w_ci_supervision > 0.0:
@@ -276,12 +285,24 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             ci_for_mode = model.get_ci(alpha_interior, mach_interior).detach() if cfg.detach_ci_in_mode_branch else None
             res_r, res_i, _ = pressure_ode_residual_2d(model, xi_interior, alpha_interior, mach_interior, ci_override=ci_for_mode)
             loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
-            loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
-            loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
-            loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            if model.mode_representation == "riccati":
+                ci_for_boundary = model.get_ci(alpha_boundary, mach_boundary).detach() if cfg.detach_ci_in_mode_branch else None
+                loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components_2d(
+                    model,
+                    xi_left,
+                    xi_right,
+                    alpha_boundary,
+                    mach_boundary,
+                    ci_override=ci_for_boundary,
+                )
+                loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+            else:
+                loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
+                loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+                loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
             loss_mode = (
                 cfg.w_pde * loss_pde
-                + cfg.w_bc * loss_bc
+                + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
                 + cfg.w_norm * loss_norm
                 + cfg.w_phase * loss_phase
             )
@@ -291,12 +312,22 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         else:
             res_r, res_i, _ = pressure_ode_residual_2d(model, xi_interior, alpha_interior, mach_interior)
             loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
-            loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
-            loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
-            loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+            if model.mode_representation == "riccati":
+                loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components_2d(
+                    model,
+                    xi_left,
+                    xi_right,
+                    alpha_boundary,
+                    mach_boundary,
+                )
+                loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+            else:
+                loss_bc = boundary_decay_loss_2d(model, xi_left, xi_right, alpha_boundary, mach_boundary)
+                loss_norm = normalization_loss_2d(model, xi_ref, alpha_ref, mach_ref)
+                loss_phase = phase_loss_2d(model, xi_ref, alpha_ref, mach_ref)
             loss = (
                 cfg.w_pde * loss_pde
-                + cfg.w_bc * loss_bc
+                + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
                 + cfg.w_norm * loss_norm
                 + cfg.w_phase * loss_phase
                 + cfg.w_ci_supervision * loss_ci
@@ -309,6 +340,8 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             "loss": float(loss.item()),
             "loss_pde": float(loss_pde.item()),
             "loss_bc": float(loss_bc.item()),
+            "loss_bc_kappa": float(loss_bc_kappa.item()),
+            "loss_bc_q": float(loss_bc_q.item()),
             "loss_norm": float(loss_norm.item()),
             "loss_phase": float(loss_phase.item()),
             "loss_ci_supervision": float(loss_ci.item()),
