@@ -106,6 +106,11 @@ class KHSubsonicTrainingConfig:
     classic_xi_max: float = 0.99
     enforce_mode_symmetry: bool = False
     mode_representation: str = "cartesian"
+    mode_experts: int = 1
+    alpha_split_threshold: float = 0.4
+    riccati_anchor_supervision: bool = False
+    riccati_anchor_n_xi: int = 97
+    w_riccati_anchor: float = 1.0
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
     device: str = "cpu"
 
@@ -136,6 +141,13 @@ def normalize_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, n
         p = -p
     scale = max(np.max(np.abs(p)), 1e-12)
     return y, p / scale
+
+
+def center_anchor_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    p0 = np.interp(0.0, y, np.real(p)) + 1j * np.interp(0.0, y, np.imag(p))
+    if abs(p0) > 1e-12:
+        p = p * np.exp(-1j * np.angle(p0)) / abs(p0)
+    return y, p
 
 
 def build_anchor_points(
@@ -224,6 +236,39 @@ class PressureModeReferenceCache:
             p_ref = mode["vector"][2 * solver.n_points : 3 * solver.n_points]
             self.cache[alpha_key] = normalize_pressure_mode(solver.y, p_ref)
         return self.cache[alpha_key]
+
+
+def riccati_anchor_supervision_loss(
+    model: KHSubsonicFixedMachPINN,
+    alpha_samples: torch.Tensor,
+    reference_cache: PressureModeReferenceCache,
+    *,
+    n_xi: int,
+    xi_half_width: float,
+    device: torch.device,
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    xi_template = torch.linspace(-float(xi_half_width), float(xi_half_width), int(n_xi), device=device).view(-1, 1)
+    for alpha_value in alpha_samples[:, 0].detach().cpu().numpy():
+        alpha_scalar = float(alpha_value)
+        alpha_line = torch.full_like(xi_template, alpha_scalar)
+        pr, pi, y_pred_t = reconstruct_pressure_from_riccati(model, xi_template, alpha_line, anchor_xi=0.0)
+        y_pred = y_pred_t[:, 0].detach().cpu().numpy()
+
+        y_ref, p_ref = reference_cache.get(alpha_scalar)
+        y_ref, p_ref = center_anchor_pressure_mode(y_ref, p_ref)
+        p_ref_interp = np.interp(y_pred, y_ref, np.real(p_ref)) + 1j * np.interp(y_pred, y_ref, np.imag(p_ref))
+        target = torch.tensor(
+            np.column_stack([np.real(p_ref_interp), np.imag(p_ref_interp)]),
+            dtype=pr.dtype,
+            device=device,
+        )
+        pred = torch.cat([pr, pi], dim=-1)
+        losses.append(torch.mean((pred - target) ** 2))
+
+    if not losses:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+    return torch.stack(losses).mean()
 
 
 def compute_mode_diagnostics(
@@ -388,6 +433,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         trainable_mapping_scale=cfg.trainable_mapping_scale,
         enforce_mode_symmetry=cfg.enforce_mode_symmetry,
         mode_representation=cfg.mode_representation,
+        mode_experts=cfg.mode_experts,
+        alpha_split_threshold=cfg.alpha_split_threshold,
     ).to(device)
     model.mach = float(cfg.mach)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
@@ -539,6 +586,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_peak_curvature = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_loc_center = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_anchor = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
@@ -563,6 +611,15 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     ci_override=ci_for_boundary,
                 )
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+                if cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0:
+                    loss_riccati_anchor = riccati_anchor_supervision_loss(
+                        model,
+                        alpha_ref,
+                        mode_reference_cache,
+                        n_xi=cfg.riccati_anchor_n_xi,
+                        xi_half_width=cfg.anchor_half_width,
+                        device=device,
+                    )
             else:
                 loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
                 if cfg.anchor_strategy in {"point", "max", "point_max"}:
@@ -583,6 +640,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_peak_curvature * loss_peak_curvature
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
+                + cfg.w_riccati_anchor * loss_riccati_anchor
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -594,6 +652,15 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             if model.mode_representation == "riccati":
                 loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+                if cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0:
+                    loss_riccati_anchor = riccati_anchor_supervision_loss(
+                        model,
+                        alpha_ref,
+                        mode_reference_cache,
+                        n_xi=cfg.riccati_anchor_n_xi,
+                        xi_half_width=cfg.anchor_half_width,
+                        device=device,
+                    )
             else:
                 if cfg.anchor_strategy in {"point", "max", "point_max"}:
                     loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
@@ -613,6 +680,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_peak_curvature * loss_peak_curvature
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
+                + cfg.w_riccati_anchor * loss_riccati_anchor
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
@@ -633,6 +701,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_peak_curvature": float(loss_peak_curvature.item()),
             "loss_loc_center": float(loss_loc_center.item()),
             "loss_loc_spread": float(loss_loc_spread.item()),
+            "loss_riccati_anchor": float(loss_riccati_anchor.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),

@@ -91,6 +91,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--classic-xi-max", type=float, default=0.99)
     parser.add_argument("--enforce-mode-symmetry", action="store_true")
     parser.add_argument("--mode-representation", type=str, default="cartesian", choices=["cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"])
+    parser.add_argument("--mode-experts", type=int, default=1)
+    parser.add_argument("--alpha-split-threshold", type=float, default=0.4)
+    parser.add_argument("--riccati-anchor-supervision", action="store_true")
+    parser.add_argument("--riccati-anchor-n-xi", type=int, default=97)
+    parser.add_argument("--w-riccati-anchor", type=float, default=1.0)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
     return parser
@@ -173,6 +178,11 @@ def main() -> None:
         classic_xi_max=args.classic_xi_max,
         enforce_mode_symmetry=args.enforce_mode_symmetry,
         mode_representation=args.mode_representation,
+        mode_experts=args.mode_experts,
+        alpha_split_threshold=args.alpha_split_threshold,
+        riccati_anchor_supervision=args.riccati_anchor_supervision,
+        riccati_anchor_n_xi=args.riccati_anchor_n_xi,
+        w_riccati_anchor=args.w_riccati_anchor,
         output_dir=str(args.output_dir),
         device=args.device,
     )

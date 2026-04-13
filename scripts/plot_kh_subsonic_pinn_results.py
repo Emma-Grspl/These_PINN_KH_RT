@@ -15,26 +15,12 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from classical_solver.subsonic.robust_subsonic_shooting import RobustSubsonicShootingSolver
-from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
+from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN, build_fixed_mach_model_from_config
 from src.physics.kh_subsonic_residual import base_velocity, base_velocity_derivative, dy_dxi, xi_to_y
 
 
 def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
-    return KHSubsonicFixedMachPINN(
-        alpha_min=float(config["alpha_min"]),
-        alpha_max=float(config["alpha_max"]),
-        hidden_dim=int(config["hidden_dim"]),
-        mode_depth=int(config["mode_depth"]),
-        ci_depth=int(config["ci_depth"]),
-        activation=str(config["activation"]),
-        fourier_features=int(config["fourier_features"]),
-        fourier_scale=float(config["fourier_scale"]),
-        initial_ci=float(config["initial_ci"]),
-        mapping_scale=float(config["mapping_scale"]),
-        trainable_mapping_scale=bool(config["trainable_mapping_scale"]),
-        enforce_mode_symmetry=bool(config["enforce_mode_symmetry"]) if "enforce_mode_symmetry" in config.index else False,
-        mode_representation=str(config["mode_representation"]) if "mode_representation" in config.index else "cartesian",
-    )
+    return build_fixed_mach_model_from_config(config)
 
 
 def solve_reference_curve(mach: float, alpha_min: float, alpha_max: float, num_alpha: int) -> pd.DataFrame:

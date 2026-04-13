@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import math
 
 import torch
@@ -81,6 +82,8 @@ class KHSubsonicFixedMachPINN(nn.Module):
         trainable_mapping_scale: bool = False,
         enforce_mode_symmetry: bool = False,
         mode_representation: str = "cartesian",
+        mode_experts: int = 1,
+        alpha_split_threshold: float | None = None,
     ):
         super().__init__()
         self.alpha_min = float(alpha_min)
@@ -89,18 +92,30 @@ class KHSubsonicFixedMachPINN(nn.Module):
         if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
+        self.mode_experts = int(mode_experts)
+        if self.mode_experts not in {1, 2}:
+            raise ValueError(f"Unsupported mode_experts={mode_experts!r}.")
+        if self.mode_experts == 2 and alpha_split_threshold is None:
+            alpha_split_threshold = 0.5 * (self.alpha_min + self.alpha_max)
+        self.alpha_split_threshold = None if alpha_split_threshold is None else float(alpha_split_threshold)
         mode_hidden_dim = int(mode_hidden_dim if mode_hidden_dim is not None else hidden_dim)
         ci_hidden_dim = int(ci_hidden_dim if ci_hidden_dim is not None else max(hidden_dim // 2, 1))
 
         self.mode_fourier = FourierEncoding(2, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 4 * fourier_features if fourier_features > 0 else 2
-        self.mode_net = build_mlp(
-            mode_input_dim,
-            2,
-            hidden_dim=mode_hidden_dim,
-            depth=mode_depth,
-            activation=activation,
+        self.mode_nets = nn.ModuleList(
+            [
+                build_mlp(
+                    mode_input_dim,
+                    2,
+                    hidden_dim=mode_hidden_dim,
+                    depth=mode_depth,
+                    activation=activation,
+                )
+                for _ in range(self.mode_experts)
+            ]
         )
+        self.mode_net = self.mode_nets[0]
         self.ci_net = build_mlp(
             1,
             1,
@@ -129,6 +144,20 @@ class KHSubsonicFixedMachPINN(nn.Module):
         if self.mode_fourier is None:
             return inputs
         return self.mode_fourier(inputs)
+
+    def _forward_mode_raw(self, features: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        if self.mode_experts == 1:
+            return self.mode_net(features)
+
+        raw_outputs = torch.empty(features.shape[0], 2, dtype=features.dtype, device=features.device)
+        alpha_values = alpha[:, 0]
+        left_mask = alpha_values <= float(self.alpha_split_threshold)
+        right_mask = ~left_mask
+        if torch.any(left_mask):
+            raw_outputs[left_mask] = self.mode_nets[0](features[left_mask])
+        if torch.any(right_mask):
+            raw_outputs[right_mask] = self.mode_nets[1](features[right_mask])
+        return raw_outputs
 
     def decode_mode_outputs(self, xi: torch.Tensor, raw_outputs: torch.Tensor) -> torch.Tensor:
         if self.mode_representation == "cartesian":
@@ -159,7 +188,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
     def forward(self, xi: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
         xi_in = torch.abs(xi) if self.enforce_mode_symmetry else xi
         features = self.encode_mode_inputs(xi_in, alpha)
-        raw_outputs = self.mode_net(features)
+        raw_outputs = self._forward_mode_raw(features, alpha)
         return self.decode_mode_outputs(xi, raw_outputs)
 
     def get_ci(self, alpha: torch.Tensor) -> torch.Tensor:
@@ -169,6 +198,47 @@ class KHSubsonicFixedMachPINN(nn.Module):
 
     def get_mapping_scale(self) -> torch.Tensor:
         return F.softplus(self.raw_L) + 1e-6
+
+
+def _config_get(config: Mapping[str, object] | object, key: str, default: object = None) -> object:
+    if isinstance(config, Mapping):
+        value = config.get(key, default)
+    elif hasattr(config, "index"):
+        value = config[key] if key in config.index else default
+    else:
+        value = getattr(config, key, default)
+    if value is None:
+        return default
+    try:
+        if bool(torch.isnan(torch.tensor(value, dtype=torch.float32)).item()):
+            return default
+    except Exception:
+        pass
+    return value
+
+
+def build_fixed_mach_model_from_config(config: Mapping[str, object] | object) -> KHSubsonicFixedMachPINN:
+    mode_hidden_dim = _config_get(config, "mode_hidden_dim")
+    ci_hidden_dim = _config_get(config, "ci_hidden_dim")
+    return KHSubsonicFixedMachPINN(
+        alpha_min=float(_config_get(config, "alpha_min")),
+        alpha_max=float(_config_get(config, "alpha_max")),
+        hidden_dim=int(_config_get(config, "hidden_dim")),
+        mode_hidden_dim=None if mode_hidden_dim is None else int(mode_hidden_dim),
+        ci_hidden_dim=None if ci_hidden_dim is None else int(ci_hidden_dim),
+        mode_depth=int(_config_get(config, "mode_depth")),
+        ci_depth=int(_config_get(config, "ci_depth")),
+        activation=str(_config_get(config, "activation")),
+        fourier_features=int(_config_get(config, "fourier_features", 0)),
+        fourier_scale=float(_config_get(config, "fourier_scale", 2.0)),
+        initial_ci=float(_config_get(config, "initial_ci", 0.2)),
+        mapping_scale=float(_config_get(config, "mapping_scale", 3.0)),
+        trainable_mapping_scale=bool(_config_get(config, "trainable_mapping_scale", False)),
+        enforce_mode_symmetry=bool(_config_get(config, "enforce_mode_symmetry", False)),
+        mode_representation=str(_config_get(config, "mode_representation", "cartesian")),
+        mode_experts=int(_config_get(config, "mode_experts", 1)),
+        alpha_split_threshold=_config_get(config, "alpha_split_threshold"),
+    )
 
 
 class KHSubsonicMultiMachPINN(nn.Module):
