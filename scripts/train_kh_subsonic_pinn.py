@@ -98,6 +98,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--riccati-anchor-every", type=int, default=20)
     parser.add_argument("--riccati-anchor-alphas", type=float, nargs="*", default=None)
     parser.add_argument("--w-riccati-anchor", type=float, default=1.0)
+    parser.add_argument("--w-q-supervision", type=float, default=0.0)
+    parser.add_argument("--q-supervision-n-xi", type=int, default=97)
+    parser.add_argument("--q-supervision-every", type=int, default=20)
+    parser.add_argument("--q-supervision-alpha-count", type=int, default=6)
+    parser.add_argument("--mode-low-alpha-threshold", type=float, default=0.25)
+    parser.add_argument("--mode-low-alpha-weight", type=float, default=1.0)
+    parser.add_argument("--mode-low-alpha-audit-fraction", type=float, default=0.6)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
     return parser
@@ -187,6 +194,13 @@ def main() -> None:
         riccati_anchor_every=args.riccati_anchor_every,
         riccati_anchor_alphas=tuple(args.riccati_anchor_alphas or []),
         w_riccati_anchor=args.w_riccati_anchor,
+        w_q_supervision=args.w_q_supervision,
+        q_supervision_n_xi=args.q_supervision_n_xi,
+        q_supervision_every=args.q_supervision_every,
+        q_supervision_alpha_count=args.q_supervision_alpha_count,
+        mode_low_alpha_threshold=args.mode_low_alpha_threshold,
+        mode_low_alpha_weight=args.mode_low_alpha_weight,
+        mode_low_alpha_audit_fraction=args.mode_low_alpha_audit_fraction,
         output_dir=str(args.output_dir),
         device=args.device,
     )

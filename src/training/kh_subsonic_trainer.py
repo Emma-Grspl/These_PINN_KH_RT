@@ -113,6 +113,13 @@ class KHSubsonicTrainingConfig:
     riccati_anchor_every: int = 20
     riccati_anchor_alphas: tuple[float, ...] = ()
     w_riccati_anchor: float = 1.0
+    w_q_supervision: float = 0.0
+    q_supervision_n_xi: int = 97
+    q_supervision_every: int = 20
+    q_supervision_alpha_count: int = 6
+    mode_low_alpha_threshold: float = 0.25
+    mode_low_alpha_weight: float = 1.0
+    mode_low_alpha_audit_fraction: float = 0.6
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
     device: str = "cpu"
 
@@ -285,6 +292,127 @@ def build_riccati_anchor_alphas(
     return alpha_ref[:count]
 
 
+def build_mode_audit_alphas(cfg: KHSubsonicTrainingConfig) -> np.ndarray:
+    n_total = max(int(cfg.n_mode_audit_alpha), 1)
+    alpha_min = float(cfg.alpha_min)
+    alpha_max = float(cfg.alpha_max)
+    threshold = float(np.clip(cfg.mode_low_alpha_threshold, alpha_min, alpha_max))
+
+    if n_total == 1 or threshold <= alpha_min or cfg.mode_low_alpha_audit_fraction <= 0.0:
+        return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
+    if threshold >= alpha_max:
+        return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
+
+    n_low = int(round(float(cfg.mode_low_alpha_audit_fraction) * n_total))
+    n_low = min(max(n_low, 1), n_total - 1)
+    n_high = n_total - n_low
+
+    low = np.linspace(alpha_min, threshold, n_low, endpoint=False, dtype=float)
+    high = np.linspace(threshold, alpha_max, n_high, dtype=float)
+    grid = np.concatenate([low, high])
+    if grid.shape[0] != n_total:
+        return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
+    return grid
+
+
+def mode_alpha_weights(alphas: np.ndarray, cfg: KHSubsonicTrainingConfig) -> np.ndarray:
+    weights = np.ones_like(alphas, dtype=float)
+    threshold = float(cfg.mode_low_alpha_threshold)
+    if cfg.mode_low_alpha_weight > 1.0:
+        weights[alphas <= threshold] = float(cfg.mode_low_alpha_weight)
+    return weights
+
+
+def weighted_mean(values: np.ndarray, weights: np.ndarray) -> float:
+    total = float(np.sum(weights))
+    if total <= 0.0:
+        return float(np.mean(values))
+    return float(np.sum(values * weights) / total)
+
+
+def compute_reference_q(y: np.ndarray, p: np.ndarray) -> np.ndarray:
+    dp_dy = np.gradient(p, y, edge_order=2)
+    denom = np.where(np.abs(p) > 1e-10, p, 1e-10 + 0.0j)
+    return np.imag(dp_dy / denom)
+
+
+def build_q_supervision_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    alpha_ref: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    count = min(int(cfg.q_supervision_alpha_count), int(alpha_ref.shape[0]))
+    if count <= 0:
+        return alpha_ref[:0]
+
+    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(cfg.alpha_min)), float(cfg.alpha_max))
+    n_low = count // 2 if threshold > float(cfg.alpha_min) else 0
+    n_base = count - n_low
+
+    chunks: list[torch.Tensor] = []
+    if n_base > 0:
+        if alpha_ref.shape[0] <= n_base:
+            chunks.append(alpha_ref[:n_base])
+        else:
+            perm = torch.randperm(alpha_ref.shape[0], device=device)[:n_base]
+            chunks.append(alpha_ref[perm])
+    if n_low > 0:
+        low = torch.rand(n_low, 1, device=device, dtype=alpha_ref.dtype)
+        low = float(cfg.alpha_min) + (threshold - float(cfg.alpha_min)) * low
+        chunks.append(low)
+
+    alpha_samples = torch.cat(chunks, dim=0)
+    perm = torch.randperm(alpha_samples.shape[0], device=device)
+    return alpha_samples[perm]
+
+
+def riccati_q_supervision_loss(
+    model: KHSubsonicFixedMachPINN,
+    alpha_samples: torch.Tensor,
+    reference_cache: PressureModeReferenceCache,
+    *,
+    n_xi: int,
+    phase_mask_fraction: float,
+    low_alpha_threshold: float,
+    low_alpha_weight: float,
+    device: torch.device,
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    xi_template = torch.linspace(-0.98, 0.98, int(n_xi), device=device).view(-1, 1)
+    y_pred = xi_to_y(xi_template, model.get_mapping_scale().detach())[:, 0].detach().cpu().numpy()
+
+    for alpha_value in alpha_samples[:, 0].detach().cpu().numpy():
+        alpha_scalar = float(alpha_value)
+        alpha_line = torch.full_like(xi_template, alpha_scalar)
+        q_pred = model(xi_template, alpha_line)[:, 1]
+
+        y_ref, p_ref = reference_cache.get(alpha_scalar)
+        q_ref = compute_reference_q(y_ref, p_ref)
+        overlap = (y_pred >= float(np.min(y_ref))) & (y_pred <= float(np.max(y_ref)))
+        if not np.any(overlap):
+            continue
+
+        y_overlap = y_pred[overlap]
+        p_ref_real = np.interp(y_overlap, y_ref, np.real(p_ref))
+        p_ref_imag = np.interp(y_overlap, y_ref, np.imag(p_ref))
+        env_ref = np.hypot(p_ref_real, p_ref_imag)
+        q_ref_interp = np.interp(y_overlap, y_ref, q_ref)
+        amp_threshold = float(phase_mask_fraction) * max(float(np.max(np.abs(p_ref))), 1e-12)
+        mask = env_ref >= amp_threshold
+        if not np.any(mask):
+            mask = np.ones_like(env_ref, dtype=bool)
+
+        target = torch.tensor(q_ref_interp[mask], dtype=q_pred.dtype, device=device)
+        q_local = q_pred[torch.tensor(overlap, device=device)][torch.tensor(mask, device=device)]
+        alpha_weight = float(low_alpha_weight) if alpha_scalar <= float(low_alpha_threshold) else 1.0
+        losses.append(alpha_weight * torch.mean((q_local - target) ** 2))
+
+    if not losses:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+    return torch.stack(losses).mean()
+
+
 def compute_mode_diagnostics(
     model: KHSubsonicFixedMachPINN,
     *,
@@ -368,7 +496,7 @@ def audit_ci_and_mode(
     ci_abs_err = abs(ci_pred - ci_true_np)
     denom = abs(ci_true_np) + 1e-8
     ci_rel_err = ci_abs_err / denom
-    mode_alphas = np.linspace(cfg.alpha_min, cfg.alpha_max, cfg.n_mode_audit_alpha, dtype=float)
+    mode_alphas = build_mode_audit_alphas(cfg)
     mode_diag = [
         compute_mode_diagnostics(
             model,
@@ -384,6 +512,8 @@ def audit_ci_and_mode(
     env_rel_err = np.array([row["env_rel"] for row in mode_diag], dtype=float)
     phase_rel_err = np.array([row["phase_rel"] for row in mode_diag], dtype=float)
     peak_shift_err = np.array([row["peak_shift"] for row in mode_diag], dtype=float)
+    mode_weights = mode_alpha_weights(mode_alphas, cfg)
+    mode_focus_err = np.maximum.reduce([mode_rel_err, env_rel_err, phase_rel_err]) * mode_weights
     metrics = {
         "audit_ci_mae": float(ci_abs_err.mean()),
         "audit_ci_max_abs": float(ci_abs_err.max()),
@@ -397,19 +527,22 @@ def audit_ci_and_mode(
         "audit_phase_rel_max": float(phase_rel_err.max()),
         "audit_peak_shift_mean": float(peak_shift_err.mean()),
         "audit_peak_shift_max": float(peak_shift_err.max()),
+        "audit_env_rel_weighted_mean": weighted_mean(env_rel_err, mode_weights),
+        "audit_phase_rel_weighted_mean": weighted_mean(phase_rel_err, mode_weights),
+        "audit_peak_shift_weighted_mean": weighted_mean(peak_shift_err, mode_weights),
     }
     metrics["audit_checkpoint_metric"] = (
         cfg.audit_ci_weight * metrics["audit_ci_mae"]
-        + cfg.audit_env_weight * metrics["audit_env_rel_mean"]
-        + cfg.audit_phase_weight * metrics["audit_phase_rel_mean"]
-        + cfg.audit_peak_weight * metrics["audit_peak_shift_mean"]
+        + cfg.audit_env_weight * metrics["audit_env_rel_weighted_mean"]
+        + cfg.audit_phase_weight * metrics["audit_phase_rel_weighted_mean"]
+        + cfg.audit_peak_weight * metrics["audit_peak_shift_weighted_mean"]
     )
     return (
         metrics,
         np.asarray(alphas_np, dtype=float),
         np.asarray(ci_abs_err, dtype=float),
         mode_alphas,
-        mode_rel_err,
+        mode_focus_err,
     )
 
 
@@ -601,6 +734,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_loc_center = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_anchor = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_q_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
@@ -640,6 +774,18 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         xi_half_width=cfg.anchor_half_width,
                         device=device,
                     )
+                if cfg.w_q_supervision > 0.0 and cfg.q_supervision_every > 0 and epoch % cfg.q_supervision_every == 0:
+                    alpha_q = build_q_supervision_alphas(cfg, alpha_ref, device=device)
+                    loss_q_supervision = riccati_q_supervision_loss(
+                        model,
+                        alpha_q,
+                        mode_reference_cache,
+                        n_xi=cfg.q_supervision_n_xi,
+                        phase_mask_fraction=cfg.phase_mask_fraction,
+                        low_alpha_threshold=cfg.mode_low_alpha_threshold,
+                        low_alpha_weight=cfg.mode_low_alpha_weight,
+                        device=device,
+                    )
             else:
                 loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
                 if cfg.anchor_strategy in {"point", "max", "point_max"}:
@@ -661,6 +807,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
                 + cfg.w_riccati_anchor * loss_riccati_anchor
+                + cfg.w_q_supervision * loss_q_supervision
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -687,6 +834,18 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         xi_half_width=cfg.anchor_half_width,
                         device=device,
                     )
+                if cfg.w_q_supervision > 0.0 and cfg.q_supervision_every > 0 and epoch % cfg.q_supervision_every == 0:
+                    alpha_q = build_q_supervision_alphas(cfg, alpha_ref, device=device)
+                    loss_q_supervision = riccati_q_supervision_loss(
+                        model,
+                        alpha_q,
+                        mode_reference_cache,
+                        n_xi=cfg.q_supervision_n_xi,
+                        phase_mask_fraction=cfg.phase_mask_fraction,
+                        low_alpha_threshold=cfg.mode_low_alpha_threshold,
+                        low_alpha_weight=cfg.mode_low_alpha_weight,
+                        device=device,
+                    )
             else:
                 if cfg.anchor_strategy in {"point", "max", "point_max"}:
                     loss_norm = normalization_loss(model, xi_ref, alpha_anchor)
@@ -707,6 +866,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
                 + cfg.w_riccati_anchor * loss_riccati_anchor
+                + cfg.w_q_supervision * loss_q_supervision
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
@@ -728,6 +888,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_loc_center": float(loss_loc_center.item()),
             "loss_loc_spread": float(loss_loc_spread.item()),
             "loss_riccati_anchor": float(loss_riccati_anchor.item()),
+            "loss_q_supervision": float(loss_q_supervision.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),
