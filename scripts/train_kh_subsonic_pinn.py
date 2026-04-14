@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-mode-audit-y", type=int, default=801)
     parser.add_argument("--audit-every", type=int, default=250)
     parser.add_argument("--checkpoint-every", type=int, default=500)
+    parser.add_argument("--disable-classic-ci-supervision", action="store_true")
+    parser.add_argument("--disable-classic-mode-audit", action="store_true")
     parser.add_argument("--stage-split-epoch", type=int, default=0)
     parser.add_argument("--stage2-freeze-ci", action="store_true")
     parser.add_argument("--stage2-ci-lr-scale", type=float, default=1.0)
@@ -140,6 +142,8 @@ def main() -> None:
         n_mode_audit_y=args.n_mode_audit_y,
         audit_every=args.audit_every,
         checkpoint_every=args.checkpoint_every,
+        enable_classic_ci_supervision=not args.disable_classic_ci_supervision,
+        enable_classic_mode_audit=not args.disable_classic_mode_audit,
         stage_split_epoch=args.stage_split_epoch,
         stage2_freeze_ci=args.stage2_freeze_ci,
         stage2_ci_lr_scale=args.stage2_ci_lr_scale,

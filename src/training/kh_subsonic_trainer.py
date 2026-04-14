@@ -59,6 +59,8 @@ class KHSubsonicTrainingConfig:
     n_mode_audit_y: int = 801
     audit_every: int = 250
     checkpoint_every: int = 500
+    enable_classic_ci_supervision: bool = True
+    enable_classic_mode_audit: bool = True
     stage_split_epoch: int = 0
     stage2_freeze_ci: bool = False
     stage2_ci_lr_scale: float = 1.0
@@ -551,18 +553,30 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    reference_cache = SubsonicReferenceCache.build(
-        mach=cfg.mach,
-        alpha_min=cfg.alpha_min,
-        alpha_max=cfg.alpha_max,
-        num_alpha=cfg.n_reference_alpha,
+    use_classic_ci_supervision = bool(cfg.enable_classic_ci_supervision)
+    use_classic_mode_audit = bool(cfg.enable_classic_mode_audit)
+    use_classic_mode_supervision = bool(
+        (cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0) or cfg.w_q_supervision > 0.0
     )
-    mode_reference_cache = PressureModeReferenceCache(
-        mach=cfg.mach,
-        n_points=cfg.classic_n_points,
-        mapping_scale=cfg.classic_mapping_scale,
-        xi_max=cfg.classic_xi_max,
-    )
+    use_classic_references = use_classic_ci_supervision or use_classic_mode_audit or use_classic_mode_supervision
+
+    reference_cache = None
+    if use_classic_references:
+        reference_cache = SubsonicReferenceCache.build(
+            mach=cfg.mach,
+            alpha_min=cfg.alpha_min,
+            alpha_max=cfg.alpha_max,
+            num_alpha=cfg.n_reference_alpha,
+        )
+
+    mode_reference_cache = None
+    if use_classic_mode_audit or use_classic_mode_supervision:
+        mode_reference_cache = PressureModeReferenceCache(
+            mach=cfg.mach,
+            n_points=cfg.classic_n_points,
+            mapping_scale=cfg.classic_mapping_scale,
+            xi_max=cfg.classic_xi_max,
+        )
 
     model = KHSubsonicFixedMachPINN(
         alpha_min=cfg.alpha_min,
@@ -721,9 +735,13 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
-        ci_target = reference_cache.interpolate(alpha_supervision)
-        ci_pred = model.get_ci(alpha_supervision)
-        loss_ci = torch.mean((ci_pred - ci_target).pow(2))
+        if use_classic_ci_supervision:
+            assert reference_cache is not None
+            ci_target = reference_cache.interpolate(alpha_supervision)
+            ci_pred = model.get_ci(alpha_supervision)
+            loss_ci = torch.mean((ci_pred - ci_target).pow(2))
+        else:
+            loss_ci = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_bc_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_bc_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_norm = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -766,6 +784,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     and epoch % cfg.riccati_anchor_every == 0
                 ):
                     alpha_anchor_loss = build_riccati_anchor_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
                     loss_riccati_anchor = riccati_anchor_supervision_loss(
                         model,
                         alpha_anchor_loss,
@@ -776,6 +795,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     )
                 if cfg.w_q_supervision > 0.0 and cfg.q_supervision_every > 0 and epoch % cfg.q_supervision_every == 0:
                     alpha_q = build_q_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
                     loss_q_supervision = riccati_q_supervision_loss(
                         model,
                         alpha_q,
@@ -826,6 +846,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     and epoch % cfg.riccati_anchor_every == 0
                 ):
                     alpha_anchor_loss = build_riccati_anchor_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
                     loss_riccati_anchor = riccati_anchor_supervision_loss(
                         model,
                         alpha_anchor_loss,
@@ -836,6 +857,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     )
                 if cfg.w_q_supervision > 0.0 and cfg.q_supervision_every > 0 and epoch % cfg.q_supervision_every == 0:
                     alpha_q = build_q_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
                     loss_q_supervision = riccati_q_supervision_loss(
                         model,
                         alpha_q,
@@ -898,7 +920,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "ci_mid": float(model.get_ci(torch.tensor([[0.5 * (cfg.alpha_min + cfg.alpha_max)]], device=device)).item()),
         }
 
-        if epoch == 1 or epoch % cfg.audit_every == 0:
+        should_audit = use_classic_mode_audit and cfg.audit_every > 0 and (epoch == 1 or epoch % cfg.audit_every == 0)
+        if should_audit:
+            assert reference_cache is not None
+            assert mode_reference_cache is not None
             audit_metrics, alpha_grid, ci_abs_err, mode_alpha_grid, mode_rel_err = audit_ci_and_mode(
                 model,
                 reference_cache,
@@ -939,6 +964,23 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 f"n_focus={record['n_focus_alphas']} | "
                 f"L={record['mapping_scale']:.3f}"
             )
+        else:
+            focus_alphas = None
+            record["n_focus_alphas"] = 0
+            record["focus_alpha_min"] = np.nan
+            record["focus_alpha_max"] = np.nan
+            record["audit_checkpoint_metric"] = float(record["loss"])
+            king.update(model, record["audit_checkpoint_metric"])
+            if epoch == 1 or (cfg.audit_every > 0 and epoch % cfg.audit_every == 0):
+                print(
+                    f"Epoch {epoch:5d} | loss={record['loss']:.3e} | "
+                    f"pde={record['loss_pde']:.3e} | "
+                    f"bc_k={record['loss_bc_kappa']:.3e} | "
+                    f"bc_q={record['loss_bc_q']:.3e} | "
+                    f"ci_sup={record['loss_ci_supervision']:.3e} | "
+                    f"q_sup={record['loss_q_supervision']:.3e} | "
+                    f"L={record['mapping_scale']:.3f}"
+                )
         history.append(record)
 
         if epoch % cfg.checkpoint_every == 0:
