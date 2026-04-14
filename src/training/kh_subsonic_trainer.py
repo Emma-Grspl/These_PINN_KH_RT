@@ -144,20 +144,10 @@ def safe_torch_save(state_dict: dict, path: Path) -> None:
     torch.save(state_dict, path, _use_new_zipfile_serialization=False)
 
 
-def normalize_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    idx = int(np.argmax(np.abs(p)))
-    if np.abs(p[idx]) > 0.0:
-        p = p * np.exp(-1j * np.angle(p[idx]))
-    if np.max(np.real(p)) < abs(np.min(np.real(p))):
-        p = -p
-    scale = max(np.max(np.abs(p)), 1e-12)
-    return y, p / scale
-
-
-def center_anchor_pressure_mode(y: np.ndarray, p: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    p0 = np.interp(0.0, y, np.real(p)) + 1j * np.interp(0.0, y, np.imag(p))
+def anchor_pressure_mode(y: np.ndarray, p: np.ndarray, *, anchor_y: float = 0.0) -> tuple[np.ndarray, np.ndarray]:
+    p0 = np.interp(anchor_y, y, np.real(p)) + 1j * np.interp(anchor_y, y, np.imag(p))
     if abs(p0) > 1e-12:
-        p = p * np.exp(-1j * np.angle(p0)) / abs(p0)
+        p = p / p0
     return y, p
 
 
@@ -245,7 +235,7 @@ class PressureModeReferenceCache:
             if mode is None:
                 raise RuntimeError(f"Aucun mode classique selectionne pour alpha={alpha:.6f}, M={self.mach:.6f}.")
             p_ref = mode["vector"][2 * solver.n_points : 3 * solver.n_points]
-            self.cache[alpha_key] = normalize_pressure_mode(solver.y, p_ref)
+            self.cache[alpha_key] = anchor_pressure_mode(solver.y, p_ref, anchor_y=0.0)
         return self.cache[alpha_key]
 
 
@@ -267,7 +257,6 @@ def riccati_anchor_supervision_loss(
         y_pred = y_pred_t[:, 0].detach().cpu().numpy()
 
         y_ref, p_ref = reference_cache.get(alpha_scalar)
-        y_ref, p_ref = center_anchor_pressure_mode(y_ref, p_ref)
         p_ref_interp = np.interp(y_pred, y_ref, np.real(p_ref)) + 1j * np.interp(y_pred, y_ref, np.imag(p_ref))
         target = torch.tensor(
             np.column_stack([np.real(p_ref_interp), np.imag(p_ref_interp)]),
@@ -437,7 +426,7 @@ def compute_mode_diagnostics(
             pred = model(xi, alpha_tensor)
             y_pred = xi_to_y(xi, model.get_mapping_scale().detach()).cpu().numpy().reshape(-1)
             p_pred = (pred[:, 0] + 1j * pred[:, 1]).cpu().numpy().reshape(-1)
-    y_pred, p_pred = normalize_pressure_mode(y_pred, p_pred)
+    y_pred, p_pred = anchor_pressure_mode(y_pred, p_pred, anchor_y=0.0)
 
     y_min = max(float(np.min(y_ref)), float(np.min(y_pred)))
     y_max = min(float(np.max(y_ref)), float(np.max(y_pred)))
