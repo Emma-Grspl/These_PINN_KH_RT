@@ -110,6 +110,8 @@ class KHSubsonicTrainingConfig:
     alpha_split_threshold: float = 0.4
     riccati_anchor_supervision: bool = False
     riccati_anchor_n_xi: int = 97
+    riccati_anchor_every: int = 20
+    riccati_anchor_alphas: tuple[float, ...] = ()
     w_riccati_anchor: float = 1.0
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
     device: str = "cpu"
@@ -269,6 +271,18 @@ def riccati_anchor_supervision_loss(
     if not losses:
         return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
     return torch.stack(losses).mean()
+
+
+def build_riccati_anchor_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    alpha_ref: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    if len(cfg.riccati_anchor_alphas):
+        return torch.tensor(cfg.riccati_anchor_alphas, dtype=alpha_ref.dtype, device=device).view(-1, 1)
+    count = min(3, alpha_ref.shape[0])
+    return alpha_ref[:count]
 
 
 def compute_mode_diagnostics(
@@ -611,10 +625,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     ci_override=ci_for_boundary,
                 )
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
-                if cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0:
+                if (
+                    cfg.riccati_anchor_supervision
+                    and cfg.w_riccati_anchor > 0.0
+                    and cfg.riccati_anchor_every > 0
+                    and epoch % cfg.riccati_anchor_every == 0
+                ):
+                    alpha_anchor_loss = build_riccati_anchor_alphas(cfg, alpha_ref, device=device)
                     loss_riccati_anchor = riccati_anchor_supervision_loss(
                         model,
-                        alpha_ref,
+                        alpha_anchor_loss,
                         mode_reference_cache,
                         n_xi=cfg.riccati_anchor_n_xi,
                         xi_half_width=cfg.anchor_half_width,
@@ -652,10 +672,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             if model.mode_representation == "riccati":
                 loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
-                if cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0:
+                if (
+                    cfg.riccati_anchor_supervision
+                    and cfg.w_riccati_anchor > 0.0
+                    and cfg.riccati_anchor_every > 0
+                    and epoch % cfg.riccati_anchor_every == 0
+                ):
+                    alpha_anchor_loss = build_riccati_anchor_alphas(cfg, alpha_ref, device=device)
                     loss_riccati_anchor = riccati_anchor_supervision_loss(
                         model,
-                        alpha_ref,
+                        alpha_anchor_loss,
                         mode_reference_cache,
                         n_xi=cfg.riccati_anchor_n_xi,
                         xi_half_width=cfg.anchor_half_width,

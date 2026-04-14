@@ -95,6 +95,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--alpha-split-threshold", type=float, default=0.4)
     parser.add_argument("--riccati-anchor-supervision", action="store_true")
     parser.add_argument("--riccati-anchor-n-xi", type=int, default=97)
+    parser.add_argument("--riccati-anchor-every", type=int, default=20)
+    parser.add_argument("--riccati-anchor-alphas", type=float, nargs="*", default=None)
     parser.add_argument("--w-riccati-anchor", type=float, default=1.0)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
@@ -182,6 +184,8 @@ def main() -> None:
         alpha_split_threshold=args.alpha_split_threshold,
         riccati_anchor_supervision=args.riccati_anchor_supervision,
         riccati_anchor_n_xi=args.riccati_anchor_n_xi,
+        riccati_anchor_every=args.riccati_anchor_every,
+        riccati_anchor_alphas=tuple(args.riccati_anchor_alphas or []),
         w_riccati_anchor=args.w_riccati_anchor,
         output_dir=str(args.output_dir),
         device=args.device,
