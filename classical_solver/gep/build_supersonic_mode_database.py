@@ -62,6 +62,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--distance-tol", type=float, default=0.02)
     parser.add_argument("--ci-weight", type=float, default=2.0)
     parser.add_argument("--previous-weight", type=float, default=0.6)
+    parser.add_argument("--branch-overlap-weight", type=float, default=0.35)
+    parser.add_argument("--branch-jump-cr-weight", type=float, default=0.45)
+    parser.add_argument("--branch-jump-ci-weight", type=float, default=0.20)
+    parser.add_argument("--branch-overlap-top-k", type=int, default=5)
     parser.add_argument("--y-points", type=int, default=561)
     parser.add_argument("--accepted-only", action="store_true")
     parser.add_argument("--resume", action="store_true")
@@ -82,7 +86,12 @@ def solve_point(
     distance_tol: float,
     target_guess: tuple[float, float],
     shooting_guess: tuple[float, float],
+    previous_guess: tuple[float, float] | None,
     previous_signature: np.ndarray | None,
+    branch_overlap_weight: float,
+    branch_jump_cr_weight: float,
+    branch_jump_ci_weight: float,
+    branch_overlap_top_k: int,
 ) -> tuple[dict, NotebookStyleDenseGEPSolver | None, dict | None]:
     best_row: dict | None = None
     best_solver: NotebookStyleDenseGEPSolver | None = None
@@ -101,9 +110,14 @@ def solve_point(
         )
         mode, selection_source, n_modes = solver.get_branch_mode(
             target_guess=target_guess,
+            previous_guess=previous_guess,
             previous_signature=previous_signature,
             prefer_positive_cr=True,
             ci_weight=ci_weight,
+            overlap_top_k=branch_overlap_top_k,
+            overlap_weight=branch_overlap_weight,
+            jump_cr_weight=branch_jump_cr_weight,
+            jump_ci_weight=branch_jump_ci_weight,
         )
         if mode is None:
             continue
@@ -350,7 +364,12 @@ def run_supersonic_mode_database(args: argparse.Namespace) -> None:
                 distance_tol=args.distance_tol,
                 target_guess=target_guess,
                 shooting_guess=shooting_guess,
+                previous_guess=previous_gep,
                 previous_signature=previous_signature,
+                branch_overlap_weight=args.branch_overlap_weight,
+                branch_jump_cr_weight=args.branch_jump_cr_weight,
+                branch_jump_ci_weight=args.branch_jump_ci_weight,
+                branch_overlap_top_k=args.branch_overlap_top_k,
             )
 
             summary_row = dict(chosen)

@@ -279,12 +279,16 @@ class NotebookStyleDenseGEPSolver:
         self,
         *,
         target_guess: tuple[float, float],
+        previous_guess: tuple[float, float] | None = None,
         previous_signature: np.ndarray | None = None,
         prefer_positive_cr: bool = True,
         ci_weight: float = 2.0,
         spectral_window_factor: float = 1.5,
         spectral_window_floor: float = 0.01,
         overlap_top_k: int = 5,
+        overlap_weight: float = 0.35,
+        jump_cr_weight: float = 0.45,
+        jump_ci_weight: float = 0.20,
     ) -> tuple[dict | None, str, int]:
         modes = self.finite_modes()
         if prefer_positive_cr:
@@ -314,14 +318,38 @@ class NotebookStyleDenseGEPSolver:
             key=lambda mode: self.spectral_distance(mode, target_guess, ci_weight=ci_weight),
         )[: max(1, overlap_top_k)]
 
-        chosen = max(
-            candidates,
-            key=lambda mode: (
-                self.signature_overlap(mode, previous_signature),
-                -self.spectral_distance(mode, target_guess, ci_weight=ci_weight),
-            ),
+        if previous_guess is None:
+            chosen = max(
+                candidates,
+                key=lambda mode: (
+                    self.signature_overlap(mode, previous_signature),
+                    -self.spectral_distance(mode, target_guess, ci_weight=ci_weight),
+                ),
+            )
+            return chosen, "target_then_overlap", len(modes)
+
+        distance_scale = max(
+            max(self.spectral_distance(mode, target_guess, ci_weight=ci_weight) for mode in candidates),
+            1e-8,
         )
-        return chosen, "target_then_overlap", len(modes)
+        jump_cr_scale = max(max(abs(mode["cr"] - previous_guess[0]) for mode in candidates), 1e-8)
+        jump_ci_scale = max(max(abs(mode["ci"] - previous_guess[1]) for mode in candidates), 1e-8)
+
+        def composite_score(mode: dict) -> tuple[float, float]:
+            distance_term = self.spectral_distance(mode, target_guess, ci_weight=ci_weight) / distance_scale
+            overlap_term = 1.0 - self.signature_overlap(mode, previous_signature)
+            jump_cr_term = abs(mode["cr"] - previous_guess[0]) / jump_cr_scale
+            jump_ci_term = abs(mode["ci"] - previous_guess[1]) / jump_ci_scale
+            score = (
+                distance_term
+                + overlap_weight * overlap_term
+                + jump_cr_weight * jump_cr_term
+                + jump_ci_weight * jump_ci_term
+            )
+            return score, distance_term
+
+        chosen = min(candidates, key=composite_score)
+        return chosen, "composite_branch_score", len(modes)
 
     def solve_most_unstable(
         self,
