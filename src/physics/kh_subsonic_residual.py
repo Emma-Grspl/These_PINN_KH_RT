@@ -259,6 +259,67 @@ def riccati_boundary_loss_components(
     return loss_kappa, loss_q
 
 
+def riccati_boundary_band_loss_components(
+    model,
+    alpha: torch.Tensor,
+    *,
+    n_points: int,
+    xi_start: float,
+    xi_end: float,
+    ci_override: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if n_points <= 0:
+        zero = torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+        return zero, zero
+
+    xi_left = torch.linspace(-float(xi_end), -float(xi_start), int(n_points), device=alpha.device, dtype=alpha.dtype).view(-1, 1)
+    xi_right = torch.linspace(float(xi_start), float(xi_end), int(n_points), device=alpha.device, dtype=alpha.dtype).view(-1, 1)
+    xi_left.requires_grad_(True)
+    xi_right.requires_grad_(True)
+
+    if alpha.shape[0] == 1:
+        alpha_left = alpha.repeat(xi_left.shape[0], 1)
+        alpha_right = alpha.repeat(xi_right.shape[0], 1)
+    else:
+        alpha_left = alpha[: xi_left.shape[0]]
+        alpha_right = alpha[: xi_right.shape[0]]
+
+    pred_left = model(xi_left, alpha_left)
+    pred_right = model(xi_right, alpha_right)
+    ci = model.get_ci(alpha_left) if ci_override is None else ci_override
+    gamma_left, gamma_right = asymptotic_riccati_gammas(alpha_left, float(getattr(model, "mach", 0.5)), ci)
+
+    loss_kappa = (
+        (pred_left[:, 0:1] - gamma_left.real).pow(2).mean()
+        + (pred_right[:, 0:1] - gamma_right.real).pow(2).mean()
+    )
+    loss_q = (
+        (pred_left[:, 1:2] - gamma_left.imag).pow(2).mean()
+        + (pred_right[:, 1:2] - gamma_right.imag).pow(2).mean()
+    )
+    return loss_kappa, loss_q
+
+
+def riccati_center_constraints(
+    model,
+    alpha: torch.Tensor,
+    *,
+    center_xi: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    xi_center = torch.full_like(alpha, float(center_xi), requires_grad=True)
+    pred = model(xi_center, alpha)
+    kappa = pred[:, 0:1]
+
+    kappa_xi = _differentiate(kappa, xi_center)
+    mapping_scale = model.get_mapping_scale()
+    y_xi = dy_dxi(xi_center, mapping_scale)
+    kappa_y = kappa_xi / y_xi
+
+    loss_center = kappa.pow(2).mean()
+    loss_peak = torch.relu(kappa_y).pow(2).mean()
+    return loss_center, loss_peak
+
+
 def normalization_loss(
     model,
     xi_ref: torch.Tensor,

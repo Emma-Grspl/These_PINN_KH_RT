@@ -104,6 +104,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--q-supervision-n-xi", type=int, default=97)
     parser.add_argument("--q-supervision-every", type=int, default=20)
     parser.add_argument("--q-supervision-alpha-count", type=int, default=6)
+    parser.add_argument("--w-riccati-center-kappa", type=float, default=0.0)
+    parser.add_argument("--w-riccati-center-peak", type=float, default=0.0)
+    parser.add_argument("--w-riccati-boundary-band-kappa", type=float, default=0.0)
+    parser.add_argument("--w-riccati-boundary-band-q", type=float, default=0.0)
+    parser.add_argument("--riccati-center-xi", type=float, default=0.0)
+    parser.add_argument("--riccati-boundary-band-points", type=int, default=0)
+    parser.add_argument("--riccati-boundary-band-start", type=float, default=0.94)
+    parser.add_argument("--riccati-boundary-band-end", type=float, default=0.995)
     parser.add_argument("--mode-low-alpha-threshold", type=float, default=0.25)
     parser.add_argument("--mode-low-alpha-weight", type=float, default=1.0)
     parser.add_argument("--mode-low-alpha-audit-fraction", type=float, default=0.6)
@@ -202,6 +210,14 @@ def main() -> None:
         q_supervision_n_xi=args.q_supervision_n_xi,
         q_supervision_every=args.q_supervision_every,
         q_supervision_alpha_count=args.q_supervision_alpha_count,
+        w_riccati_center_kappa=args.w_riccati_center_kappa,
+        w_riccati_center_peak=args.w_riccati_center_peak,
+        w_riccati_boundary_band_kappa=args.w_riccati_boundary_band_kappa,
+        w_riccati_boundary_band_q=args.w_riccati_boundary_band_q,
+        riccati_center_xi=args.riccati_center_xi,
+        riccati_boundary_band_points=args.riccati_boundary_band_points,
+        riccati_boundary_band_start=args.riccati_boundary_band_start,
+        riccati_boundary_band_end=args.riccati_boundary_band_end,
         mode_low_alpha_threshold=args.mode_low_alpha_threshold,
         mode_low_alpha_weight=args.mode_low_alpha_weight,
         mode_low_alpha_audit_fraction=args.mode_low_alpha_audit_fraction,

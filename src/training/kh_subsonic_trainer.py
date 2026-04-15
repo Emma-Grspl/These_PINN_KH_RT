@@ -24,7 +24,9 @@ from src.physics.kh_subsonic_residual import (
     normalization_loss,
     phase_loss,
     pressure_ode_residual,
+    riccati_boundary_band_loss_components,
     riccati_boundary_loss_components,
+    riccati_center_constraints,
     reconstruct_pressure_from_riccati,
     xi_to_y,
 )
@@ -119,6 +121,14 @@ class KHSubsonicTrainingConfig:
     q_supervision_n_xi: int = 97
     q_supervision_every: int = 20
     q_supervision_alpha_count: int = 6
+    w_riccati_center_kappa: float = 0.0
+    w_riccati_center_peak: float = 0.0
+    w_riccati_boundary_band_kappa: float = 0.0
+    w_riccati_boundary_band_q: float = 0.0
+    riccati_center_xi: float = 0.0
+    riccati_boundary_band_points: int = 0
+    riccati_boundary_band_start: float = 0.94
+    riccati_boundary_band_end: float = 0.995
     mode_low_alpha_threshold: float = 0.25
     mode_low_alpha_weight: float = 1.0
     mode_low_alpha_audit_fraction: float = 0.6
@@ -742,6 +752,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_anchor = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_q_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_center_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_center_peak = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_boundary_band_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_boundary_band_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
@@ -766,6 +780,24 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     ci_override=ci_for_boundary,
                 )
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+                if cfg.w_riccati_center_kappa > 0.0 or cfg.w_riccati_center_peak > 0.0:
+                    loss_riccati_center_kappa, loss_riccati_center_peak = riccati_center_constraints(
+                        model,
+                        alpha_ref,
+                        center_xi=cfg.riccati_center_xi,
+                    )
+                if (
+                    cfg.riccati_boundary_band_points > 0
+                    and (cfg.w_riccati_boundary_band_kappa > 0.0 or cfg.w_riccati_boundary_band_q > 0.0)
+                ):
+                    loss_riccati_boundary_band_kappa, loss_riccati_boundary_band_q = riccati_boundary_band_loss_components(
+                        model,
+                        alpha_boundary,
+                        n_points=cfg.riccati_boundary_band_points,
+                        xi_start=cfg.riccati_boundary_band_start,
+                        xi_end=cfg.riccati_boundary_band_end,
+                        ci_override=ci_for_boundary,
+                    )
                 if (
                     cfg.riccati_anchor_supervision
                     and cfg.w_riccati_anchor > 0.0
@@ -817,6 +849,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_loc_spread * loss_loc_spread
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
+                + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
+                + cfg.w_riccati_center_peak * loss_riccati_center_peak
+                + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
+                + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -828,6 +864,23 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             if model.mode_representation == "riccati":
                 loss_bc_kappa, loss_bc_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha_boundary)
                 loss_bc = cfg.w_bc_kappa * loss_bc_kappa + cfg.w_bc_q * loss_bc_q
+                if cfg.w_riccati_center_kappa > 0.0 or cfg.w_riccati_center_peak > 0.0:
+                    loss_riccati_center_kappa, loss_riccati_center_peak = riccati_center_constraints(
+                        model,
+                        alpha_ref,
+                        center_xi=cfg.riccati_center_xi,
+                    )
+                if (
+                    cfg.riccati_boundary_band_points > 0
+                    and (cfg.w_riccati_boundary_band_kappa > 0.0 or cfg.w_riccati_boundary_band_q > 0.0)
+                ):
+                    loss_riccati_boundary_band_kappa, loss_riccati_boundary_band_q = riccati_boundary_band_loss_components(
+                        model,
+                        alpha_boundary,
+                        n_points=cfg.riccati_boundary_band_points,
+                        xi_start=cfg.riccati_boundary_band_start,
+                        xi_end=cfg.riccati_boundary_band_end,
+                    )
                 if (
                     cfg.riccati_anchor_supervision
                     and cfg.w_riccati_anchor > 0.0
@@ -878,6 +931,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_loc_spread * loss_loc_spread
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
+                + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
+                + cfg.w_riccati_center_peak * loss_riccati_center_peak
+                + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
+                + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
@@ -900,6 +957,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_loc_spread": float(loss_loc_spread.item()),
             "loss_riccati_anchor": float(loss_riccati_anchor.item()),
             "loss_q_supervision": float(loss_q_supervision.item()),
+            "loss_riccati_center_kappa": float(loss_riccati_center_kappa.item()),
+            "loss_riccati_center_peak": float(loss_riccati_center_peak.item()),
+            "loss_riccati_boundary_band_kappa": float(loss_riccati_boundary_band_kappa.item()),
+            "loss_riccati_boundary_band_q": float(loss_riccati_boundary_band_q.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),
