@@ -345,12 +345,12 @@ def run_supersonic_mode_database(args: argparse.Namespace) -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     if args.alpha_values:
-        alphas = np.asarray(sorted(set(float(v) for v in args.alpha_values)), dtype=float)
+        alphas = np.asarray(list(dict.fromkeys(float(v) for v in args.alpha_values)), dtype=float)
     else:
         alphas = np.linspace(args.alpha_min, args.alpha_max, args.num_alpha)
 
     if args.mach_values:
-        machs = np.asarray(sorted(set(float(v) for v in args.mach_values)), dtype=float)
+        machs = np.asarray(list(dict.fromkeys(float(v) for v in args.mach_values)), dtype=float)
     else:
         machs = np.linspace(args.mach_min, args.mach_max, args.num_mach)
 
