@@ -18,7 +18,7 @@ from classical_solver.supersonic.mstab17_supersonic_solver import Mstab17Superso
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Rejoue les points critiques avec le nouveau score de branche.")
     parser.add_argument("--surface-csv", type=Path, required=True)
-    parser.add_argument("--diagnostics-csv", type=Path, required=True)
+    parser.add_argument("--diagnostics-csv", type=Path, default=None)
     parser.add_argument("--output-csv", type=Path, required=True)
     parser.add_argument("--top-k", type=int, default=24)
     parser.add_argument("--n-points", type=int, default=561)
@@ -41,16 +41,31 @@ def row_key(row: pd.Series) -> tuple[float, float]:
 def main() -> None:
     args = build_parser().parse_args()
     surface_df = pd.read_csv(args.surface_csv).sort_values(["Mach", "alpha"]).reset_index(drop=True)
-    diagnostics_df = pd.read_csv(args.diagnostics_csv)
+    diagnostics_path = args.diagnostics_csv
 
-    selected = (
-        diagnostics_df[["Mach", "alpha"]]
-        .drop_duplicates()
-        .head(args.top_k)
-        .merge(surface_df, on=["Mach", "alpha"], how="left")
-        .sort_values(["Mach", "alpha"])
-        .reset_index(drop=True)
-    )
+    if diagnostics_path is not None and diagnostics_path.exists():
+        diagnostics_df = pd.read_csv(diagnostics_path)
+        selected = (
+            diagnostics_df[["Mach", "alpha"]]
+            .drop_duplicates()
+            .head(args.top_k)
+            .merge(surface_df, on=["Mach", "alpha"], how="left")
+            .sort_values(["Mach", "alpha"])
+            .reset_index(drop=True)
+        )
+    else:
+        # Fallback for Jean Zay runs where the diagnostics CSV has not been produced locally.
+        selected = (
+            surface_df.copy()
+            .assign(
+                _accepted_rank=surface_df["accepted"].astype(bool).astype(int),
+                _dist_rank=surface_df["distance_to_shooting"].fillna(np.inf),
+            )
+            .sort_values(["_accepted_rank", "_dist_rank"], ascending=[True, False])
+            .head(args.top_k)
+            .sort_values(["Mach", "alpha"])
+            .reset_index(drop=True)
+        )
 
     previous_map = {row_key(row): row for _, row in surface_df.iterrows()}
     rows: list[dict] = []

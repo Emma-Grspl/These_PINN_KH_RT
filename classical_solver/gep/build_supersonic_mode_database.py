@@ -185,6 +185,61 @@ def plot_isolines(df: pd.DataFrame, png_path: Path) -> None:
     cr_grid = pivot_cr.to_numpy(dtype=float)
     accepted = pivot_acc.to_numpy(dtype=float)
 
+    # 1D sweeps cannot be rendered with contourf; fall back to line plots.
+    if ci_grid.shape[0] < 2 or ci_grid.shape[1] < 2:
+        fig, axes = plt.subplots(1, 2, figsize=(13, 4.8), constrained_layout=True)
+        is_alpha_sweep = ci_grid.shape[0] == 1
+
+        if is_alpha_sweep:
+            x = alpha_grid
+            xlabel = r"$\alpha$"
+            mach_value = float(mach_grid[0])
+            ci_line = ci_grid[0, :]
+            cr_line = cr_grid[0, :]
+            accepted_line = accepted[0, :] > 0.5
+            subtitle = fr"Sweep 1D en $\alpha$ a Mach fixe $M={mach_value:.3f}$"
+        else:
+            x = mach_grid
+            xlabel = r"$M$"
+            alpha_value = float(alpha_grid[0])
+            ci_line = ci_grid[:, 0]
+            cr_line = cr_grid[:, 0]
+            accepted_line = accepted[:, 0] > 0.5
+            subtitle = fr"Sweep 1D en Mach a $\alpha={alpha_value:.3f}$"
+
+        for ax, values, label, color in (
+            (axes[0], ci_line, r"$c_i$", "tab:blue"),
+            (axes[1], cr_line, r"$c_r$", "tab:orange"),
+        ):
+            ax.plot(x, values, color=color, linewidth=2.0, label=label)
+            if np.any(accepted_line):
+                ax.scatter(
+                    x[accepted_line],
+                    values[accepted_line],
+                    color="tab:green",
+                    s=28,
+                    label="accepted",
+                    zorder=3,
+                )
+            if np.any(~accepted_line):
+                ax.scatter(
+                    x[~accepted_line],
+                    values[~accepted_line],
+                    color="tab:red",
+                    s=28,
+                    label="rejected",
+                    zorder=3,
+                )
+            ax.set_xlabel(xlabel)
+            ax.set_ylabel(label)
+            ax.grid(True, alpha=0.25)
+            ax.legend(loc="best")
+
+        fig.suptitle(subtitle)
+        fig.savefig(png_path, dpi=250, bbox_inches="tight")
+        plt.close(fig)
+        return
+
     fig, axes = plt.subplots(1, 2, figsize=(13, 5.5), constrained_layout=True)
 
     levels_ci = np.linspace(np.nanmin(ci_grid), np.nanmax(ci_grid), 12)

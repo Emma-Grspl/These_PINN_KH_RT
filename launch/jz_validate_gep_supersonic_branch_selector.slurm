@@ -32,10 +32,18 @@ export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 echo "Validation du selecteur de branche supersonique sur ${SLURMD_NODENAME}"
 echo "CPUs par tache: ${SLURM_CPUS_PER_TASK}"
 
+SURFACE_CSV="${SURFACE_CSV:-assets/blumen_gep/supersonic_global_m10_18_a00_03_surface.csv}"
+DIAGNOSTICS_CSV="${DIAGNOSTICS_CSV:-plot_presentation/supersonic_classique/supersonic_branch_diagnostics_top.csv}"
+OUTPUT_CSV="${OUTPUT_CSV:-plot_presentation/supersonic_classique/supersonic_branch_selector_validation.csv}"
+
+echo "Surface CSV: ${SURFACE_CSV}"
+echo "Diagnostics CSV: ${DIAGNOSTICS_CSV}"
+echo "Output CSV: ${OUTPUT_CSV}"
+
 srun python3 scripts/validate_supersonic_branch_selector.py \
-  --surface-csv assets/blumen_gep/supersonic_global_m10_18_a00_03_surface.csv \
-  --diagnostics-csv plot_presentation/supersonic_classique/supersonic_branch_diagnostics_top.csv \
-  --output-csv plot_presentation/supersonic_classique/supersonic_branch_selector_validation.csv \
+  --surface-csv "${SURFACE_CSV}" \
+  --diagnostics-csv "${DIAGNOSTICS_CSV}" \
+  --output-csv "${OUTPUT_CSV}" \
   --top-k 24 \
   --n-points 561 \
   --mapping-kind pin \
