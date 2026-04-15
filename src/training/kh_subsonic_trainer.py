@@ -27,6 +27,7 @@ from src.physics.kh_subsonic_residual import (
     riccati_boundary_band_loss_components,
     riccati_boundary_loss_components,
     riccati_center_constraints,
+    riccati_shooting_match_loss,
     reconstruct_pressure_from_riccati,
     xi_to_y,
 )
@@ -130,6 +131,9 @@ class KHSubsonicTrainingConfig:
     riccati_boundary_band_points: int = 0
     riccati_boundary_band_start: float = 0.94
     riccati_boundary_band_end: float = 0.995
+    w_riccati_shooting_match: float = 0.0
+    riccati_shooting_steps: int = 256
+    riccati_shooting_xi_boundary: float = 0.995
     mode_low_alpha_threshold: float = 0.25
     mode_low_alpha_weight: float = 1.0
     mode_low_alpha_audit_fraction: float = 0.6
@@ -759,6 +763,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_riccati_center_peak = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_boundary_band_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_boundary_band_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_shooting_match = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
@@ -800,6 +805,14 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         xi_start=cfg.riccati_boundary_band_start,
                         xi_end=cfg.riccati_boundary_band_end,
                         ci_override=ci_for_boundary,
+                    )
+                if cfg.w_riccati_shooting_match > 0.0:
+                    loss_riccati_shooting_match = riccati_shooting_match_loss(
+                        model,
+                        alpha_ref,
+                        cfg.mach,
+                        n_steps=cfg.riccati_shooting_steps,
+                        xi_boundary=cfg.riccati_shooting_xi_boundary,
                     )
                 if (
                     cfg.riccati_anchor_supervision
@@ -856,6 +869,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_center_peak * loss_riccati_center_peak
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
+                + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -883,6 +897,14 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         n_points=cfg.riccati_boundary_band_points,
                         xi_start=cfg.riccati_boundary_band_start,
                         xi_end=cfg.riccati_boundary_band_end,
+                    )
+                if cfg.w_riccati_shooting_match > 0.0:
+                    loss_riccati_shooting_match = riccati_shooting_match_loss(
+                        model,
+                        alpha_ref,
+                        cfg.mach,
+                        n_steps=cfg.riccati_shooting_steps,
+                        xi_boundary=cfg.riccati_shooting_xi_boundary,
                     )
                 if (
                     cfg.riccati_anchor_supervision
@@ -938,6 +960,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_center_peak * loss_riccati_center_peak
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
+                + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
@@ -964,6 +987,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_riccati_center_peak": float(loss_riccati_center_peak.item()),
             "loss_riccati_boundary_band_kappa": float(loss_riccati_boundary_band_kappa.item()),
             "loss_riccati_boundary_band_q": float(loss_riccati_boundary_band_q.item()),
+            "loss_riccati_shooting_match": float(loss_riccati_shooting_match.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),

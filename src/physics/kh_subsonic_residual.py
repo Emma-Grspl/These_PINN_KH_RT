@@ -53,6 +53,26 @@ def asymptotic_riccati_gammas(alpha: torch.Tensor, mach: float, ci: torch.Tensor
     return gamma_left, gamma_right
 
 
+def riccati_gamma_rhs(
+    y: torch.Tensor,
+    gamma: torch.Tensor,
+    alpha: torch.Tensor,
+    mach: float,
+    ci: torch.Tensor,
+) -> torch.Tensor:
+    one = torch.ones_like(ci)
+    c = torch.complex(torch.zeros_like(ci), ci)
+    u = torch.complex(base_velocity(y), torch.zeros_like(y))
+    du = torch.complex(base_velocity_derivative(y), torch.zeros_like(y))
+    alpha_c = torch.complex(alpha, torch.zeros_like(alpha))
+    mach_t = torch.as_tensor(float(mach), dtype=ci.dtype, device=ci.device)
+
+    u_diff = u - c
+    p_term = -2.0 * du / u_diff
+    r_term = one - mach_t**2 * (u_diff**2)
+    return -(gamma**2) - p_term * gamma + (alpha_c**2) * r_term
+
+
 def reconstruct_pressure_from_riccati(
     model,
     xi: torch.Tensor,
@@ -318,6 +338,64 @@ def riccati_center_constraints(
     loss_center = kappa.pow(2).mean()
     loss_peak = torch.relu(kappa_y).pow(2).mean()
     return loss_center, loss_peak
+
+
+def riccati_shooting_match_loss(
+    model,
+    alpha: torch.Tensor,
+    mach: float,
+    *,
+    n_steps: int,
+    xi_boundary: float,
+) -> torch.Tensor:
+    if n_steps <= 0:
+        return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+
+    mapping_scale = model.get_mapping_scale()
+    xi_edge = torch.tensor([[float(xi_boundary)]], dtype=alpha.dtype, device=alpha.device)
+    y_max = torch.abs(xi_to_y(xi_edge, mapping_scale))[0, 0]
+    if not torch.isfinite(y_max) or float(torch.abs(y_max).detach().cpu()) <= 0.0:
+        return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+
+    losses: list[torch.Tensor] = []
+    alpha_samples = alpha[:, 0]
+    ci_samples = model.get_ci(alpha)[:, 0]
+
+    def rk4_step(y_val: torch.Tensor, gamma_val: torch.Tensor, h: torch.Tensor, alpha_val: torch.Tensor, ci_val: torch.Tensor) -> torch.Tensor:
+        k1 = riccati_gamma_rhs(y_val, gamma_val, alpha_val, mach, ci_val)
+        k2 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k1, alpha_val, mach, ci_val)
+        k3 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k2, alpha_val, mach, ci_val)
+        k4 = riccati_gamma_rhs(y_val + h, gamma_val + h * k3, alpha_val, mach, ci_val)
+        return gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+    for alpha_val, ci_val in zip(alpha_samples, ci_samples):
+        alpha_scalar = alpha_val.view(1)
+        ci_scalar = ci_val.view(1)
+        gamma_left_0, gamma_right_0 = asymptotic_riccati_gammas(alpha_scalar, mach, ci_scalar)
+        gamma_left = gamma_left_0[0]
+        gamma_right = gamma_right_0[0]
+
+        y_left = -y_max
+        y_right = y_max
+        h_left = (torch.zeros_like(y_left) - y_left) / float(n_steps)
+        h_right = (torch.zeros_like(y_right) - y_right) / float(n_steps)
+
+        y_curr = y_left
+        for _ in range(int(n_steps)):
+            gamma_left = rk4_step(y_curr, gamma_left, h_left, alpha_scalar[0], ci_scalar[0])
+            y_curr = y_curr + h_left
+
+        y_curr = y_right
+        for _ in range(int(n_steps)):
+            gamma_right = rk4_step(y_curr, gamma_right, h_right, alpha_scalar[0], ci_scalar[0])
+            y_curr = y_curr + h_right
+
+        mismatch = torch.abs(gamma_left - gamma_right) ** 2
+        losses.append(mismatch.real)
+
+    if not losses:
+        return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+    return torch.stack(losses).mean()
 
 
 def normalization_loss(

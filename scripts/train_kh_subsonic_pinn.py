@@ -113,6 +113,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--riccati-boundary-band-points", type=int, default=0)
     parser.add_argument("--riccati-boundary-band-start", type=float, default=0.94)
     parser.add_argument("--riccati-boundary-band-end", type=float, default=0.995)
+    parser.add_argument("--w-riccati-shooting-match", type=float, default=0.0)
+    parser.add_argument("--riccati-shooting-steps", type=int, default=256)
+    parser.add_argument("--riccati-shooting-xi-boundary", type=float, default=0.995)
     parser.add_argument("--mode-low-alpha-threshold", type=float, default=0.25)
     parser.add_argument("--mode-low-alpha-weight", type=float, default=1.0)
     parser.add_argument("--mode-low-alpha-audit-fraction", type=float, default=0.6)
@@ -220,6 +223,9 @@ def main() -> None:
         riccati_boundary_band_points=args.riccati_boundary_band_points,
         riccati_boundary_band_start=args.riccati_boundary_band_start,
         riccati_boundary_band_end=args.riccati_boundary_band_end,
+        w_riccati_shooting_match=args.w_riccati_shooting_match,
+        riccati_shooting_steps=args.riccati_shooting_steps,
+        riccati_shooting_xi_boundary=args.riccati_shooting_xi_boundary,
         mode_low_alpha_threshold=args.mode_low_alpha_threshold,
         mode_low_alpha_weight=args.mode_low_alpha_weight,
         mode_low_alpha_audit_fraction=args.mode_low_alpha_audit_fraction,
