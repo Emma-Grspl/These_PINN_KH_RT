@@ -44,6 +44,7 @@ class KHSubsonicTrainingConfig:
     ci_hidden_dim: int | None = None
     mode_depth: int = 4
     ci_depth: int = 2
+    fixed_scalar_ci: bool = False
     activation: str = "tanh"
     fourier_features: int = 0
     fourier_scale: float = 2.0
@@ -585,6 +586,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         ci_hidden_dim=cfg.ci_hidden_dim,
         mode_depth=cfg.mode_depth,
         ci_depth=cfg.ci_depth,
+        fixed_scalar_ci=cfg.fixed_scalar_ci,
         activation=cfg.activation,
         fourier_features=cfg.fourier_features,
         fourier_scale=cfg.fourier_scale,
@@ -601,7 +603,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     ci_optimizer = None
     mode_optimizer = None
     if cfg.separate_branch_optimizers:
-        ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+        ci_params = ([model.raw_ci_bias] if model.ci_net is None else list(model.ci_net.parameters()) + [model.raw_ci_bias])
         ci_param_ids = {id(param) for param in ci_params}
         mode_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
         ci_optimizer = optim.Adam(ci_params, lr=cfg.ci_branch_lr or cfg.learning_rate)
@@ -618,8 +620,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         if cfg.stage_split_epoch > 0 and epoch == cfg.stage_split_epoch + 1 and not stage2_started:
             stage2_started = True
             if cfg.stage2_freeze_ci:
-                for param in model.ci_net.parameters():
-                    param.requires_grad_(False)
+                if model.ci_net is not None:
+                    for param in model.ci_net.parameters():
+                        param.requires_grad_(False)
                 model.raw_ci_bias.requires_grad_(False)
                 if cfg.separate_branch_optimizers:
                     mode_params = [p for p in model.parameters() if p.requires_grad]
@@ -633,7 +636,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         for group in ci_optimizer.param_groups:
                             group["lr"] = (cfg.ci_branch_lr or cfg.learning_rate) * cfg.stage2_ci_lr_scale
                 else:
-                    ci_params = list(model.ci_net.parameters()) + [model.raw_ci_bias]
+                    ci_params = ([model.raw_ci_bias] if model.ci_net is None else list(model.ci_net.parameters()) + [model.raw_ci_bias])
                     ci_param_ids = {id(param) for param in ci_params}
                     other_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
                     optimizer = optim.Adam(

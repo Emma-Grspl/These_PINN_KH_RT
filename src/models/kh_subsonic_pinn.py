@@ -84,6 +84,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
         mode_representation: str = "cartesian",
         mode_experts: int = 1,
         alpha_split_threshold: float | None = None,
+        fixed_scalar_ci: bool = False,
     ):
         super().__init__()
         self.alpha_min = float(alpha_min)
@@ -92,6 +93,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
         if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
+        self.fixed_scalar_ci = bool(fixed_scalar_ci)
         self.mode_experts = int(mode_experts)
         if self.mode_experts not in {1, 2}:
             raise ValueError(f"Unsupported mode_experts={mode_experts!r}.")
@@ -116,16 +118,19 @@ class KHSubsonicFixedMachPINN(nn.Module):
             ]
         )
         self.mode_net = self.mode_nets[0]
-        self.ci_net = build_mlp(
-            1,
-            1,
-            hidden_dim=ci_hidden_dim,
-            depth=ci_depth,
-            activation=activation,
-        )
-
         initial_raw_ci_bias = torch.log(torch.expm1(torch.tensor(float(initial_ci))))
-        self.raw_ci_bias = nn.Parameter(initial_raw_ci_bias.view(1))
+        if self.fixed_scalar_ci:
+            self.ci_net = None
+            self.raw_ci_bias = nn.Parameter(initial_raw_ci_bias.view(1))
+        else:
+            self.ci_net = build_mlp(
+                1,
+                1,
+                hidden_dim=ci_hidden_dim,
+                depth=ci_depth,
+                activation=activation,
+            )
+            self.raw_ci_bias = nn.Parameter(initial_raw_ci_bias.view(1))
 
         initial_raw_L = torch.log(torch.expm1(torch.tensor(float(mapping_scale))))
         if trainable_mapping_scale:
@@ -192,6 +197,8 @@ class KHSubsonicFixedMachPINN(nn.Module):
         return self.decode_mode_outputs(xi, raw_outputs)
 
     def get_ci(self, alpha: torch.Tensor) -> torch.Tensor:
+        if self.fixed_scalar_ci:
+            return (F.softplus(self.raw_ci_bias) + 1e-6).expand_as(alpha)
         alpha_n = self.normalize_alpha(alpha)
         raw_ci = self.ci_net(alpha_n) + self.raw_ci_bias
         return F.softplus(raw_ci) + 1e-6
@@ -238,6 +245,7 @@ def build_fixed_mach_model_from_config(config: Mapping[str, object] | object) ->
         mode_representation=str(_config_get(config, "mode_representation", "cartesian")),
         mode_experts=int(_config_get(config, "mode_experts", 1)),
         alpha_split_threshold=_config_get(config, "alpha_split_threshold"),
+        fixed_scalar_ci=bool(_config_get(config, "fixed_scalar_ci", False)),
     )
 
 

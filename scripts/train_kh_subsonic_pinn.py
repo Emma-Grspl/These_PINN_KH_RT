@@ -27,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ci-hidden-dim", type=int, default=None)
     parser.add_argument("--mode-depth", type=int, default=4)
     parser.add_argument("--ci-depth", type=int, default=2)
+    parser.add_argument("--fixed-scalar-ci", action="store_true")
     parser.add_argument("--activation", type=str, default="tanh")
     parser.add_argument("--fourier-features", type=int, default=0)
     parser.add_argument("--fourier-scale", type=float, default=2.0)
@@ -133,6 +134,7 @@ def main() -> None:
         ci_hidden_dim=args.ci_hidden_dim,
         mode_depth=args.mode_depth,
         ci_depth=args.ci_depth,
+        fixed_scalar_ci=args.fixed_scalar_ci,
         activation=args.activation,
         fourier_features=args.fourier_features,
         fourier_scale=args.fourier_scale,
