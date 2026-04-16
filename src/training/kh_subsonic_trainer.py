@@ -46,6 +46,7 @@ class KHSubsonicTrainingConfig:
     mode_depth: int = 4
     ci_depth: int = 2
     fixed_scalar_ci: bool = False
+    freeze_ci: bool = False
     activation: str = "tanh"
     fourier_features: int = 0
     fourier_scale: float = 2.0
@@ -101,6 +102,11 @@ class KHSubsonicTrainingConfig:
     w_loc_center: float = 0.0
     w_loc_spread: float = 0.0
     w_ci_supervision: float = 5.0
+    w_ci_stability_outside: float = 0.0
+    w_ci_neutrality: float = 0.0
+    w_ci_low_alpha_zero: float = 0.0
+    w_ci_smoothness: float = 0.0
+    n_ci_spectral_grid: int = 129
     audit_ci_weight: float = 10.0
     audit_mode_weight: float = 1.0
     audit_env_weight: float = 1.0
@@ -603,6 +609,11 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         alpha_split_threshold=cfg.alpha_split_threshold,
     ).to(device)
     model.mach = float(cfg.mach)
+    if cfg.freeze_ci:
+        if model.ci_net is not None:
+            for param in model.ci_net.parameters():
+                param.requires_grad_(False)
+        model.raw_ci_bias.requires_grad_(False)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
     ci_optimizer = None
     mode_optimizer = None
@@ -610,7 +621,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         ci_params = ([model.raw_ci_bias] if model.ci_net is None else list(model.ci_net.parameters()) + [model.raw_ci_bias])
         ci_param_ids = {id(param) for param in ci_params}
         mode_params = [param for param in model.parameters() if id(param) not in ci_param_ids]
-        ci_optimizer = optim.Adam(ci_params, lr=cfg.ci_branch_lr or cfg.learning_rate)
+        trainable_ci_params = [param for param in ci_params if param.requires_grad]
+        if trainable_ci_params:
+            ci_optimizer = optim.Adam(trainable_ci_params, lr=cfg.ci_branch_lr or cfg.learning_rate)
         mode_optimizer = optim.Adam(mode_params, lr=cfg.mode_branch_lr or cfg.learning_rate)
     king = KingOfTheHill(model)
     focus_alphas: np.ndarray | None = None
@@ -764,6 +777,45 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_riccati_boundary_band_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_boundary_band_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_shooting_match = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_ci_stability_outside = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_ci_neutrality = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_ci_low_alpha_zero = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_ci_smoothness = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+
+        if (
+            cfg.w_ci_stability_outside > 0.0
+            or cfg.w_ci_neutrality > 0.0
+            or cfg.w_ci_low_alpha_zero > 0.0
+            or cfg.w_ci_smoothness > 0.0
+        ):
+            alpha_spectral = torch.linspace(
+                float(cfg.alpha_min),
+                float(cfg.alpha_max),
+                max(int(cfg.n_ci_spectral_grid), 3),
+                device=device,
+                dtype=xi_interior.dtype,
+            ).view(-1, 1)
+            alpha_spectral.requires_grad_(cfg.w_ci_smoothness > 0.0)
+            ci_spectral = model.get_ci(alpha_spectral)
+
+            if cfg.w_ci_stability_outside > 0.0 and neutral_alpha is not None:
+                outside_mask = alpha_spectral[:, 0] >= float(neutral_alpha)
+                if torch.any(outside_mask):
+                    loss_ci_stability_outside = torch.mean(ci_spectral[outside_mask].pow(2))
+
+            if cfg.w_ci_neutrality > 0.0 and neutral_alpha is not None:
+                alpha_neutral_t = torch.tensor([[float(neutral_alpha)]], device=device, dtype=xi_interior.dtype)
+                ci_neutral = model.get_ci(alpha_neutral_t)
+                loss_ci_neutrality = torch.mean(ci_neutral.pow(2))
+
+            if cfg.w_ci_low_alpha_zero > 0.0:
+                alpha_low_t = torch.tensor([[float(cfg.alpha_min)]], device=device, dtype=xi_interior.dtype)
+                ci_low = model.get_ci(alpha_low_t)
+                loss_ci_low_alpha_zero = torch.mean(ci_low.pow(2))
+
+            if cfg.w_ci_smoothness > 0.0:
+                dci_dalpha = torch.autograd.grad(ci_spectral.sum(), alpha_spectral, create_graph=True)[0]
+                loss_ci_smoothness = torch.mean(dci_dalpha.pow(2))
 
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
@@ -870,6 +922,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
+                + cfg.w_ci_stability_outside * loss_ci_stability_outside
+                + cfg.w_ci_neutrality * loss_ci_neutrality
+                + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
+                + cfg.w_ci_smoothness * loss_ci_smoothness
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -961,6 +1017,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
+                + cfg.w_ci_stability_outside * loss_ci_stability_outside
+                + cfg.w_ci_neutrality * loss_ci_neutrality
+                + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
+                + cfg.w_ci_smoothness * loss_ci_smoothness
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
@@ -988,6 +1048,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_riccati_boundary_band_kappa": float(loss_riccati_boundary_band_kappa.item()),
             "loss_riccati_boundary_band_q": float(loss_riccati_boundary_band_q.item()),
             "loss_riccati_shooting_match": float(loss_riccati_shooting_match.item()),
+            "loss_ci_stability_outside": float(loss_ci_stability_outside.item()),
+            "loss_ci_neutrality": float(loss_ci_neutrality.item()),
+            "loss_ci_low_alpha_zero": float(loss_ci_low_alpha_zero.item()),
+            "loss_ci_smoothness": float(loss_ci_smoothness.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),

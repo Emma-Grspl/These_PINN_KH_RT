@@ -28,6 +28,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-depth", type=int, default=4)
     parser.add_argument("--ci-depth", type=int, default=2)
     parser.add_argument("--fixed-scalar-ci", action="store_true")
+    parser.add_argument("--freeze-ci", action="store_true")
     parser.add_argument("--activation", type=str, default="tanh")
     parser.add_argument("--fourier-features", type=int, default=0)
     parser.add_argument("--fourier-scale", type=float, default=2.0)
@@ -83,6 +84,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w-loc-center", type=float, default=0.0)
     parser.add_argument("--w-loc-spread", type=float, default=0.0)
     parser.add_argument("--w-ci-supervision", type=float, default=5.0)
+    parser.add_argument("--w-ci-stability-outside", type=float, default=0.0)
+    parser.add_argument("--w-ci-neutrality", type=float, default=0.0)
+    parser.add_argument("--w-ci-low-alpha-zero", type=float, default=0.0)
+    parser.add_argument("--w-ci-smoothness", type=float, default=0.0)
+    parser.add_argument("--n-ci-spectral-grid", type=int, default=129)
     parser.add_argument("--audit-ci-weight", type=float, default=10.0)
     parser.add_argument("--audit-mode-weight", type=float, default=1.0)
     parser.add_argument("--audit-env-weight", type=float, default=1.0)
@@ -138,6 +144,7 @@ def main() -> None:
         mode_depth=args.mode_depth,
         ci_depth=args.ci_depth,
         fixed_scalar_ci=args.fixed_scalar_ci,
+        freeze_ci=args.freeze_ci,
         activation=args.activation,
         fourier_features=args.fourier_features,
         fourier_scale=args.fourier_scale,
@@ -193,6 +200,11 @@ def main() -> None:
         w_loc_center=args.w_loc_center,
         w_loc_spread=args.w_loc_spread,
         w_ci_supervision=args.w_ci_supervision,
+        w_ci_stability_outside=args.w_ci_stability_outside,
+        w_ci_neutrality=args.w_ci_neutrality,
+        w_ci_low_alpha_zero=args.w_ci_low_alpha_zero,
+        w_ci_smoothness=args.w_ci_smoothness,
+        n_ci_spectral_grid=args.n_ci_spectral_grid,
         audit_ci_weight=args.audit_ci_weight,
         audit_mode_weight=args.audit_mode_weight,
         audit_env_weight=args.audit_env_weight,

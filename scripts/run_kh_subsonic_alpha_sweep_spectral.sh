@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+python3 scripts/train_kh_subsonic_pinn.py \
+  --mach "${MACH_VALUE:-0.5}" \
+  --alpha-min "${ALPHA_MIN:-0.02}" \
+  --alpha-max "${ALPHA_MAX:-0.95}" \
+  --epochs "${EPOCHS:-5000}" \
+  --learning-rate "${LEARNING_RATE:-1e-3}" \
+  --hidden-dim 160 \
+  --mode-depth 4 \
+  --ci-depth 2 \
+  --mapping-scale 3.0 \
+  --n-interior 512 \
+  --n-boundary 64 \
+  --n-alpha-supervision 128 \
+  --n-anchor-alpha 32 \
+  --n-norm-interior 256 \
+  --n-reference-alpha 121 \
+  --n-audit-alpha 31 \
+  --n-mode-audit-alpha 11 \
+  --n-mode-audit-y 801 \
+  --audit-every 100 \
+  --checkpoint-every 500 \
+  --disable-classic-ci-supervision \
+  --mode-representation riccati \
+  --mode-experts 2 \
+  --alpha-split-threshold 0.40 \
+  --focus-fraction 0.0 \
+  --anchor-strategy band \
+  --anchor-half-width 0.12 \
+  --mode-center-fraction 1.0 \
+  --mode-center-half-width 0.3 \
+  --w-pde 1.0 \
+  --w-bc-kappa 10.0 \
+  --w-bc-q 20.0 \
+  --w-ci-supervision 0.0 \
+  --w-riccati-center-kappa 5.0 \
+  --w-riccati-center-peak 2.0 \
+  --w-riccati-boundary-band-kappa 2.0 \
+  --w-riccati-boundary-band-q 8.0 \
+  --riccati-boundary-band-points 32 \
+  --riccati-boundary-band-start 0.94 \
+  --riccati-boundary-band-end 0.995 \
+  --w-ci-stability-outside "${W_CI_STABILITY_OUTSIDE:-25.0}" \
+  --w-ci-neutrality "${W_CI_NEUTRALITY:-25.0}" \
+  --w-ci-low-alpha-zero "${W_CI_LOW_ALPHA_ZERO:-10.0}" \
+  --w-ci-smoothness "${W_CI_SMOOTHNESS:-0.5}" \
+  --n-ci-spectral-grid "${N_CI_SPECTRAL_GRID:-129}" \
+  --mode-low-alpha-threshold 0.25 \
+  --mode-low-alpha-weight 2.0 \
+  --mode-low-alpha-audit-fraction 0.65 \
+  --device "${DEVICE:-cuda}" \
+  --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_fixed_mach_M05_riccati_spectral_alpha_sweep}"
