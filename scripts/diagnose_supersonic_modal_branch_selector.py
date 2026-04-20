@@ -38,6 +38,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--w-phase-span", type=float, default=0.3)
     parser.add_argument("--w-cr-jump", type=float, default=0.2)
     parser.add_argument("--w-ci-jump", type=float, default=0.1)
+    parser.add_argument("--soft-cr-floor", type=float, default=None)
+    parser.add_argument("--w-cr-floor", type=float, default=0.0)
     parser.add_argument("--output-stem", type=str, required=True)
     return parser
 
@@ -149,6 +151,9 @@ def rerank_candidates(
         cr_jump_term = 0.0 if previous_mode is None else abs(row["cand_cr"] - float(previous_mode["cr"])) / cr_jump_scale
         ci_jump_term = 0.0 if previous_mode is None else abs(row["cand_ci"] - float(previous_mode["ci"])) / ci_jump_scale
         prev_overlap_term = 0.0 if previous_mode is None else (1.0 - float(overlap_prev))
+        cr_floor_term = 0.0
+        if args.soft_cr_floor is not None and np.isfinite(args.soft_cr_floor):
+            cr_floor_term = max(float(args.soft_cr_floor) - row["cand_cr"], 0.0)
 
         score = (
             args.w_shooting * (row["distance_to_shooting"] / dist_scale)
@@ -159,6 +164,7 @@ def rerank_candidates(
             + args.w_phase_span * phase_term
             + args.w_cr_jump * cr_jump_term
             + args.w_ci_jump * ci_jump_term
+            + args.w_cr_floor * cr_floor_term
         )
         scored.append(
             {
@@ -166,6 +172,7 @@ def rerank_candidates(
                 "_mode": mode,
                 "overlap_to_reference_high": float(overlap_ref),
                 "overlap_to_previous": np.nan if previous_mode is None else float(overlap_prev),
+                "cr_floor_term": float(cr_floor_term),
                 "score": float(score),
             }
         )
@@ -269,6 +276,7 @@ def main() -> None:
                 "spread_y": chosen["spread_y"],
                 "phase_span": chosen["phase_span"],
                 "score": chosen["score"],
+                "cr_floor_term": chosen["cr_floor_term"],
                 "selection_source": "modal_branch_score",
                 "success": True,
                 "accepted": chosen["distance_to_shooting"] <= args.distance_tol,
