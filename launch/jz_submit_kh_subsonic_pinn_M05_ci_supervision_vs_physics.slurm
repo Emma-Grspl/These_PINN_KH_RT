@@ -2,7 +2,8 @@
 #SBATCH --job-name=KH_PINN_M05_hybrid_vs_phys
 #SBATCH --output=slurm/log/%x_%j.out
 #SBATCH --error=slurm/log/%x_%j.err
-#SBATCH -A fdb@gpu
+#SBATCH -A fdb@v100
+#SBATCH --constraint=v100-32g
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
@@ -14,7 +15,7 @@
 set -euo pipefail
 
 module purge
-module load pytorch-gpu/py3/2.6.0
+module load pytorch-gpu/py3/2.1.1
 
 cd "${SLURM_SUBMIT_DIR}"
 export PYTHONPATH="${SLURM_SUBMIT_DIR}:${PYTHONPATH:-}"
