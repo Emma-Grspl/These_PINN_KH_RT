@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--num-alpha", type=int, default=81)
     parser.add_argument("--mode-alphas", type=float, nargs="+", default=[0.20, 0.50, 0.80])
+    parser.add_argument("--num-mode-alpha", type=int, default=17)
     parser.add_argument("--n-y-pinn", type=int, default=1001)
     parser.add_argument("--device", type=str, default="cpu")
     return parser
@@ -238,6 +239,8 @@ def save_mode_comparison(
     axes[1].plot(y_common, phase_p, "-.", color="#c84c09", linewidth=2.0, label="PINN physique pure")
     axes[1].set_title(r"Phase $\arg(\hat{p})$")
     axes[1].set_xlim(x_min, x_max)
+    if alpha >= 0.75:
+        axes[1].set_ylim(-0.15, 0.15)
     axes[1].legend()
 
     fig.suptitle(
@@ -268,6 +271,73 @@ def save_mode_comparison(
         "phase_rmse_physics_only": phase_rmse_p,
     }
     return fig_path, metrics
+
+
+def compute_mode_metrics_at_alpha(
+    *,
+    alpha: float,
+    mach: float,
+    hybrid_run: Path,
+    physics_run: Path,
+    n_y_pinn: int,
+    device: torch.device,
+) -> dict[str, float]:
+    _, metrics = save_mode_comparison(
+        alpha=alpha,
+        mach=mach,
+        hybrid_run=hybrid_run,
+        physics_run=physics_run,
+        n_y_pinn=n_y_pinn,
+        output_dir=Path("/tmp"),
+        device=device,
+    )
+    return metrics
+
+
+def save_mode_error_vs_alpha(
+    *,
+    alpha_values: np.ndarray,
+    mach: float,
+    hybrid_run: Path,
+    physics_run: Path,
+    n_y_pinn: int,
+    output_dir: Path,
+    device: torch.device,
+) -> tuple[Path, Path]:
+    rows = [
+        compute_mode_metrics_at_alpha(
+            alpha=float(alpha),
+            mach=mach,
+            hybrid_run=hybrid_run,
+            physics_run=physics_run,
+            n_y_pinn=n_y_pinn,
+            device=device,
+        )
+        for alpha in alpha_values
+    ]
+    df = pd.DataFrame(rows)
+
+    fig, axes = plt.subplots(2, 1, figsize=(10.8, 7.6), sharex=True)
+    axes[0].plot(df["alpha"], df["amp_rel_hybrid_8pt"], "--", color="#0b6e4f", linewidth=2.0, label="PINN hybride, 8 points")
+    axes[0].plot(df["alpha"], df["amp_rel_physics_only"], "-.", color="#c84c09", linewidth=2.0, label="PINN physique pure")
+    axes[0].set_ylabel("Relative amplitude error")
+    axes[0].set_title(r"Mode reconstruction error vs $\alpha$ at fixed Mach")
+    axes[0].legend()
+
+    axes[1].plot(df["alpha"], df["phase_rmse_hybrid_8pt"], "--", color="#0b6e4f", linewidth=2.0, label="PINN hybride, 8 points")
+    axes[1].plot(df["alpha"], df["phase_rmse_physics_only"], "-.", color="#c84c09", linewidth=2.0, label="PINN physique pure")
+    axes[1].set_xlabel(r"$\alpha$")
+    axes[1].set_ylabel("Phase RMSE")
+    axes[1].legend()
+
+    fig.tight_layout()
+    fig_path = output_dir / "mode_error_vs_alpha.png"
+    fig.savefig(fig_path, bbox_inches="tight")
+    plt.close(fig)
+
+    csv_path = output_dir / "mode_error_vs_alpha.csv"
+    df.to_csv(csv_path, index=False)
+    return fig_path, csv_path
 
 
 def save_summary_barplot(summary_df: pd.DataFrame, output_dir: Path) -> Path:
@@ -338,6 +408,15 @@ def main() -> None:
         mode_figs.append(fig_path)
 
     pd.DataFrame(mode_rows).to_csv(args.output_dir / "mode_reconstruction_metrics.csv", index=False)
+    mode_err_fig, mode_err_csv = save_mode_error_vs_alpha(
+        alpha_values=np.linspace(float(config["alpha_min"]), float(config["alpha_max"]), int(args.num_mode_alpha)),
+        mach=mach,
+        hybrid_run=hybrid_run,
+        physics_run=physics_run,
+        n_y_pinn=int(args.n_y_pinn),
+        output_dir=args.output_dir,
+        device=device,
+    )
 
     budget_summary = pd.DataFrame(
         {
@@ -373,6 +452,8 @@ def main() -> None:
     print(curve_csv)
     for fig_path in mode_figs:
         print(fig_path)
+    print(mode_err_fig)
+    print(mode_err_csv)
     print(args.output_dir / "mode_reconstruction_metrics.csv")
     print(args.output_dir / "comparison_summary.csv")
 
