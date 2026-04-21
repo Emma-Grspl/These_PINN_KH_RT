@@ -75,6 +75,8 @@ def sample_alpha_batch(
     alpha_max: float,
     device: torch.device,
 ) -> torch.Tensor:
+    if n_points <= 0:
+        return torch.empty(0, 1, device=device)
     alpha = torch.rand(n_points, 1, device=device)
     return alpha_min + (alpha_max - alpha_min) * alpha
 
@@ -88,6 +90,8 @@ def sample_alpha_mixed_batch(
     high_alpha_start_ratio: float,
     device: torch.device,
 ) -> torch.Tensor:
+    if n_points <= 0:
+        return torch.empty(0, 1, device=device)
     n_high = int(round(high_alpha_fraction * n_points))
     n_high = min(max(n_high, 0), n_points)
     n_uniform = n_points - n_high
@@ -130,6 +134,8 @@ def sample_alpha_adaptive_batch(
     neutral_half_width: float = 0.0,
     device: torch.device,
 ) -> torch.Tensor:
+    if n_points <= 0:
+        return torch.empty(0, 1, device=device)
     n_focus = int(round(focus_fraction * n_points))
     if focus_alphas is None or len(focus_alphas) == 0:
         n_focus = 0
@@ -171,6 +177,8 @@ def sample_alpha_adaptive_batch(
             )
         )
 
+    if not chunks:
+        return torch.empty(0, 1, device=device)
     alpha = torch.cat(chunks, dim=0)
     permutation = torch.randperm(alpha.shape[0], device=device)
     return alpha[permutation]
@@ -183,6 +191,8 @@ def sample_mach_batch(
     mach_max: float,
     device: torch.device,
 ) -> torch.Tensor:
+    if n_points <= 0:
+        return torch.empty(0, 1, device=device)
     mach = torch.rand(n_points, 1, device=device)
     return mach_min + (mach_max - mach_min) * mach
 
@@ -200,6 +210,9 @@ def sample_alpha_mach_adaptive_batch(
     mach_half_width: float,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    if n_points <= 0:
+        empty = torch.empty(0, 1, device=device)
+        return empty, empty
     n_focus = int(round(focus_fraction * n_points))
     if focus_points is None or len(focus_points) == 0:
         n_focus = 0
@@ -222,6 +235,9 @@ def sample_alpha_mach_adaptive_batch(
         alpha_chunks.append(torch.clamp(centers[:, 0:1] + alpha_local, min=alpha_min, max=alpha_max))
         mach_chunks.append(torch.clamp(centers[:, 1:2] + mach_local, min=mach_min, max=mach_max))
 
+    if not alpha_chunks:
+        empty = torch.empty(0, 1, device=device)
+        return empty, empty
     alpha = torch.cat(alpha_chunks, dim=0)
     mach = torch.cat(mach_chunks, dim=0)
     permutation = torch.randperm(alpha.shape[0], device=device)
@@ -251,6 +267,9 @@ def sample_alpha_mach_adaptive_neutral_batch(
     lower_mach_max: float,
     device: torch.device,
 ) -> tuple[torch.Tensor, torch.Tensor]:
+    if n_points <= 0:
+        empty = torch.empty(0, 1, device=device)
+        return empty, empty
     n_focus = int(round(focus_fraction * n_points))
     if focus_points is None or len(focus_points) == 0:
         n_focus = 0
@@ -340,6 +359,9 @@ def sample_alpha_mach_adaptive_neutral_batch(
         alpha_chunks.append(alpha_lower)
         mach_chunks.append(mach_lower)
 
+    if not alpha_chunks:
+        empty = torch.empty(0, 1, device=device)
+        return empty, empty
     alpha = torch.cat(alpha_chunks, dim=0)
     mach = torch.cat(mach_chunks, dim=0)
     permutation = torch.randperm(alpha.shape[0], device=device)
