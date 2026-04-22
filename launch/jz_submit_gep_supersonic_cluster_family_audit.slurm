@@ -2,19 +2,18 @@
 #SBATCH --job-name=GEP_sup_cluster_audit
 #SBATCH --output=slurm/log/%x_%j.out
 #SBATCH --error=slurm/log/%x_%j.err
-#SBATCH -A fdb@v100
-#SBATCH --constraint=v100-32g
+#SBATCH -A fdb@cpu
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=10
+#SBATCH --cpus-per-task=8
 #SBATCH --hint=nomultithread
 #SBATCH --time=04:00:00
-#SBATCH --qos=qos_gpu-t3
+#SBATCH --qos=qos_cpu-t3
 
 set -euo pipefail
 
 module purge
-module load pytorch-gpu/py3/2.1.1
+module load python/3.11.5
 
 cd "${SLURM_SUBMIT_DIR}"
 export PYTHONPATH="${SLURM_SUBMIT_DIR}:${PYTHONPATH:-}"
