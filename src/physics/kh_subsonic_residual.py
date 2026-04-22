@@ -118,6 +118,10 @@ def reconstruct_pressure_from_riccati(
     return pr, pi, y
 
 
+def extract_pressure_components(outputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    return outputs[:, 0:1], outputs[:, 1:2]
+
+
 def reconstruct_pressure_from_riccati_2d(
     model,
     xi: torch.Tensor,
@@ -179,7 +183,8 @@ def pressure_ode_residual(
     if not xi.requires_grad:
         xi.requires_grad_(True)
 
-    if getattr(model, "mode_representation", "cartesian") == "riccati":
+    mode_representation = getattr(model, "mode_representation", "cartesian")
+    if mode_representation == "riccati":
         outputs = model(xi, alpha)
         kappa = outputs[:, 0:1]
         q = outputs[:, 1:2]
@@ -214,6 +219,43 @@ def pressure_ode_residual(
         return residual.real, residual.imag, y
 
     outputs = model(xi, alpha)
+    if mode_representation == "first_order_real":
+        p_r = outputs[:, 0:1]
+        p_i = outputs[:, 1:2]
+        v_r = outputs[:, 2:3]
+        v_i = outputs[:, 3:4]
+
+        p_r_xi = _differentiate(p_r, xi)
+        p_i_xi = _differentiate(p_i, xi)
+        v_r_xi = _differentiate(v_r, xi)
+        v_i_xi = _differentiate(v_i, xi)
+
+        mapping_scale = model.get_mapping_scale()
+        y = xi_to_y(xi, mapping_scale)
+        y_xi = dy_dxi(xi, mapping_scale)
+
+        u = base_velocity(y)
+        du = base_velocity_derivative(y)
+        ci = model.get_ci(alpha) if ci_override is None else ci_override
+
+        p = torch.complex(p_r, p_i)
+        v = torch.complex(v_r, v_i)
+        c = torch.complex(torch.zeros_like(ci), ci)
+        u_complex = torch.complex(u, torch.zeros_like(u))
+        du_complex = torch.complex(du, torch.zeros_like(du))
+        alpha_complex = torch.complex(alpha, torch.zeros_like(alpha))
+        mach_t = torch.as_tensor(float(mach), dtype=xi.dtype, device=xi.device)
+
+        u_diff = u_complex - c
+        r_term = 1.0 - mach_t**2 * (u_diff**2)
+        f = (2.0 * du_complex * v - (alpha_complex**2) * r_term * p) / u_diff
+
+        res_state_r = p_r_xi - y_xi * v_r
+        res_state_i = p_i_xi - y_xi * v_i
+        res_dyn_r = v_r_xi - y_xi * f.real
+        res_dyn_i = v_i_xi - y_xi * f.imag
+        return torch.cat([res_state_r, res_dyn_r], dim=0), torch.cat([res_state_i, res_dyn_i], dim=0), y
+
     p_r = outputs[:, 0:1]
     p_i = outputs[:, 1:2]
 
@@ -247,9 +289,26 @@ def pressure_ode_residual(
 
 
 def boundary_decay_loss(model, xi_left: torch.Tensor, xi_right: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
-    if getattr(model, "mode_representation", "cartesian") == "riccati":
+    mode_representation = getattr(model, "mode_representation", "cartesian")
+    if mode_representation == "riccati":
         loss_kappa, loss_q = riccati_boundary_loss_components(model, xi_left, xi_right, alpha)
         return loss_kappa + loss_q
+    if mode_representation == "first_order_real":
+        pred_left = model(xi_left, alpha)
+        pred_right = model(xi_right, alpha)
+        p_left_r, p_left_i = extract_pressure_components(pred_left)
+        p_right_r, p_right_i = extract_pressure_components(pred_right)
+        v_left_r = pred_left[:, 2:3]
+        v_left_i = pred_left[:, 3:4]
+        v_right_r = pred_right[:, 2:3]
+        v_right_i = pred_right[:, 3:4]
+        ci = model.get_ci(alpha)
+        gamma_left, gamma_right = asymptotic_riccati_gammas(alpha, float(getattr(model, "mach", 0.5)), ci)
+        target_left = gamma_left * torch.complex(p_left_r, p_left_i)
+        target_right = gamma_right * torch.complex(p_right_r, p_right_i)
+        loss_left = (v_left_r - target_left.real).pow(2).mean() + (v_left_i - target_left.imag).pow(2).mean()
+        loss_right = (v_right_r - target_right.real).pow(2).mean() + (v_right_i - target_right.imag).pow(2).mean()
+        return loss_left + loss_right
     pred_left = model(xi_left, alpha)
     pred_right = model(xi_right, alpha)
     return pred_left.pow(2).mean() + pred_right.pow(2).mean()
@@ -407,8 +466,10 @@ def normalization_loss(
     target_pi: float = 0.0,
 ) -> torch.Tensor:
     pred = model(xi_ref, alpha)
+    pred_pr, pred_pi = extract_pressure_components(pred)
+    pred_mode = torch.cat([pred_pr, pred_pi], dim=-1)
     target = torch.tensor([target_pr, target_pi], dtype=pred.dtype, device=pred.device).view(1, 2)
-    return torch.mean((pred - target) ** 2)
+    return torch.mean((pred_mode - target) ** 2)
 
 
 def integral_normalization_loss(
@@ -419,15 +480,17 @@ def integral_normalization_loss(
     target_energy: float = 1.0,
 ) -> torch.Tensor:
     pred = model(xi, alpha)
-    energy = torch.mean(pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2))
+    pred_pr, pred_pi = extract_pressure_components(pred)
+    energy = torch.mean(pred_pr.pow(2) + pred_pi.pow(2))
     target = torch.tensor(float(target_energy), dtype=pred.dtype, device=pred.device)
     return (energy - target).pow(2)
 
 
 def phase_loss(model, xi_ref: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
     pred = model(xi_ref, alpha)
-    imag_penalty = torch.mean(pred[:, 1:2].pow(2))
-    sign_penalty = torch.mean(torch.relu(-pred[:, 0:1]).pow(2))
+    pred_pr, pred_pi = extract_pressure_components(pred)
+    imag_penalty = torch.mean(pred_pi.pow(2))
+    sign_penalty = torch.mean(torch.relu(-pred_pr).pow(2))
     return imag_penalty + sign_penalty
 
 
@@ -437,9 +500,10 @@ def localization_moment_losses(
     alpha: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     pred = model(xi, alpha)
+    pred_pr, pred_pi = extract_pressure_components(pred)
     mapping_scale = model.get_mapping_scale()
     y = xi_to_y(xi, mapping_scale)
-    weight = pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2) + 1e-12
+    weight = pred_pr.pow(2) + pred_pi.pow(2) + 1e-12
     weight_sum = torch.mean(weight) + 1e-12
     y_bar = torch.mean(y * weight) / weight_sum
     spread = torch.mean((y - y_bar).pow(2) * weight) / weight_sum
@@ -454,7 +518,8 @@ def local_peak_envelope_losses(
     if not xi_ref.requires_grad:
         xi_ref.requires_grad_(True)
     pred = model(xi_ref, alpha)
-    env2 = pred[:, 0:1].pow(2) + pred[:, 1:2].pow(2)
+    pred_pr, pred_pi = extract_pressure_components(pred)
+    env2 = pred_pr.pow(2) + pred_pi.pow(2)
     env2_xi = _differentiate(env2, xi_ref)
     env2_xixi = _differentiate(env2_xi, xi_ref)
     slope_loss = torch.mean(env2_xi.pow(2))

@@ -59,7 +59,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
     Prototype PINN subsonique a Mach fixe.
 
     - entrees du reseau de mode : (xi, alpha_normalise)
-    - sortie : (p_r, p_i)
+        - sortie : (p_r, p_i) ou (p_r, p_i, v_r, v_i) pour le systeme premier ordre reel
     - tete spectrale separee : c_i(alpha)
     - mapping du projet : y = L * xi / (1 - xi^2)
     """
@@ -90,7 +90,7 @@ class KHSubsonicFixedMachPINN(nn.Module):
         self.alpha_min = float(alpha_min)
         self.alpha_max = float(alpha_max)
         self.enforce_mode_symmetry = bool(enforce_mode_symmetry)
-        if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati"}:
+        if mode_representation not in {"cartesian", "amplitude_phase", "log_amplitude_phase", "riccati", "first_order_real"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
         self.fixed_scalar_ci = bool(fixed_scalar_ci)
@@ -105,11 +105,12 @@ class KHSubsonicFixedMachPINN(nn.Module):
 
         self.mode_fourier = FourierEncoding(2, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 4 * fourier_features if fourier_features > 0 else 2
+        mode_output_dim = 4 if self.mode_representation == "first_order_real" else 2
         self.mode_nets = nn.ModuleList(
             [
                 build_mlp(
                     mode_input_dim,
-                    2,
+                    mode_output_dim,
                     hidden_dim=mode_hidden_dim,
                     depth=mode_depth,
                     activation=activation,
@@ -151,10 +152,11 @@ class KHSubsonicFixedMachPINN(nn.Module):
         return self.mode_fourier(inputs)
 
     def _forward_mode_raw(self, features: torch.Tensor, alpha: torch.Tensor) -> torch.Tensor:
+        output_dim = 4 if self.mode_representation == "first_order_real" else 2
         if self.mode_experts == 1:
             return self.mode_net(features)
 
-        raw_outputs = torch.empty(features.shape[0], 2, dtype=features.dtype, device=features.device)
+        raw_outputs = torch.empty(features.shape[0], output_dim, dtype=features.dtype, device=features.device)
         alpha_values = alpha[:, 0]
         left_mask = alpha_values <= float(self.alpha_split_threshold)
         right_mask = ~left_mask
@@ -178,6 +180,15 @@ class KHSubsonicFixedMachPINN(nn.Module):
             kappa = raw_outputs[:, 0:1]
             q = raw_outputs[:, 1:2] * torch.sign(xi)
             return torch.cat([kappa, q], dim=-1)
+
+        if self.mode_representation == "first_order_real":
+            if not self.enforce_mode_symmetry:
+                return raw_outputs
+            pr = raw_outputs[:, 0:1]
+            pi = raw_outputs[:, 1:2] * torch.sign(xi)
+            vr = raw_outputs[:, 2:3] * torch.sign(xi)
+            vi = raw_outputs[:, 3:4]
+            return torch.cat([pr, pi, vr, vi], dim=-1)
 
         if self.mode_representation == "amplitude_phase":
             amp = F.softplus(raw_outputs[:, 0:1]) + 1e-6
@@ -282,7 +293,7 @@ class KHSubsonicMultiMachPINN(nn.Module):
         self.alpha_max = float(alpha_max)
         self.mach_min = float(mach_min)
         self.mach_max = float(mach_max)
-        if mode_representation not in {"cartesian", "riccati"}:
+        if mode_representation not in {"cartesian", "riccati", "first_order_real"}:
             raise ValueError(f"Unsupported mode_representation={mode_representation!r}.")
         self.mode_representation = str(mode_representation)
         mode_hidden_dim = int(mode_hidden_dim if mode_hidden_dim is not None else hidden_dim)
@@ -290,9 +301,10 @@ class KHSubsonicMultiMachPINN(nn.Module):
 
         self.mode_fourier = FourierEncoding(3, fourier_features, fourier_scale) if fourier_features > 0 else None
         mode_input_dim = 6 * fourier_features if fourier_features > 0 else 3
+        mode_output_dim = 4 if self.mode_representation == "first_order_real" else 2
         self.mode_net = build_mlp(
             mode_input_dim,
-            2,
+            mode_output_dim,
             hidden_dim=mode_hidden_dim,
             depth=mode_depth,
             activation=activation,
@@ -334,6 +346,12 @@ class KHSubsonicMultiMachPINN(nn.Module):
             kappa = raw_outputs[:, 0:1]
             q = raw_outputs[:, 1:2]
             return torch.cat([kappa, q], dim=-1)
+        if self.mode_representation == "first_order_real":
+            pr = raw_outputs[:, 0:1]
+            pi = raw_outputs[:, 1:2]
+            vr = raw_outputs[:, 2:3]
+            vi = raw_outputs[:, 3:4]
+            return torch.cat([pr, pi, vr, vi], dim=-1)
         return raw_outputs
 
     def get_ci(self, alpha: torch.Tensor, mach: torch.Tensor) -> torch.Tensor:
