@@ -33,6 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-alpha", type=int, default=17)
     parser.add_argument("--n-y-pinn", type=int, default=1001)
     parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--run-a-dir", type=Path, default=None)
+    parser.add_argument("--run-b-dir", type=Path, default=None)
+    parser.add_argument("--run-a-label", type=str, default="PINN hybride, 8 points")
+    parser.add_argument("--run-b-label", type=str, default="PINN physique pure")
+    parser.add_argument("--output-stem", type=str, default="mode_error_vs_alpha")
     return parser
 
 
@@ -98,8 +103,8 @@ def compute_mode_metrics_at_alpha(
     *,
     alpha: float,
     mach: float,
-    hybrid_run: Path,
-    physics_run: Path,
+    run_a: Path,
+    run_b: Path,
     n_y_pinn: int,
     device: torch.device,
 ) -> dict[str, float]:
@@ -115,43 +120,43 @@ def compute_mode_metrics_at_alpha(
         raise RuntimeError(f"No classical mode found for alpha={alpha:.3f}, M={mach:.3f}.")
     y_classic, p_classic = normalize_pressure(solver.y, mode["vector"][2 * solver.n_points : 3 * solver.n_points])
 
-    y_h, p_h, ci_h = load_mode(hybrid_run, alpha, n_y_pinn, device)
-    y_p, p_p, ci_p = load_mode(physics_run, alpha, n_y_pinn, device)
+    y_a, p_a, ci_a = load_mode(run_a, alpha, n_y_pinn, device)
+    y_b, p_b, ci_b = load_mode(run_b, alpha, n_y_pinn, device)
 
-    y_min = max(float(np.min(y_classic)), float(np.min(y_h)), float(np.min(y_p)))
-    y_max = min(float(np.max(y_classic)), float(np.max(y_h)), float(np.max(y_p)))
+    y_min = max(float(np.min(y_classic)), float(np.min(y_a)), float(np.min(y_b)))
+    y_max = min(float(np.max(y_classic)), float(np.max(y_a)), float(np.max(y_b)))
     y_common = np.linspace(y_min, y_max, 1200, dtype=float)
 
     p_classic_i = interp_complex(y_classic, p_classic, y_common)
-    p_h_i = interp_complex(y_h, p_h, y_common)
-    p_p_i = interp_complex(y_p, p_p, y_common)
+    p_a_i = interp_complex(y_a, p_a, y_common)
+    p_b_i = interp_complex(y_b, p_b, y_common)
 
     amp_classic = np.abs(p_classic_i)
-    amp_h = np.abs(p_h_i)
-    amp_p = np.abs(p_p_i)
+    amp_a = np.abs(p_a_i)
+    amp_b = np.abs(p_b_i)
     phase_classic = np.unwrap(np.angle(p_classic_i))
-    phase_h = np.unwrap(np.angle(p_h_i))
-    phase_p = np.unwrap(np.angle(p_p_i))
+    phase_a = np.unwrap(np.angle(p_a_i))
+    phase_b = np.unwrap(np.angle(p_b_i))
     phase_classic -= phase_classic[np.argmax(amp_classic)]
-    phase_h -= phase_h[np.argmax(amp_h)]
-    phase_p -= phase_p[np.argmax(amp_p)]
+    phase_a -= phase_a[np.argmax(amp_a)]
+    phase_b -= phase_b[np.argmax(amp_b)]
 
-    env = np.maximum.reduce([amp_classic, amp_h, amp_p])
+    env = np.maximum.reduce([amp_classic, amp_a, amp_b])
     mask = env >= 0.02 * float(np.max(env))
-    amp_rel_h = float(np.linalg.norm(amp_h - amp_classic) / max(np.linalg.norm(amp_classic), 1e-12))
-    amp_rel_p = float(np.linalg.norm(amp_p - amp_classic) / max(np.linalg.norm(amp_classic), 1e-12))
-    phase_rmse_h = float(np.sqrt(np.mean((phase_h[mask] - phase_classic[mask]) ** 2))) if np.any(mask) else np.nan
-    phase_rmse_p = float(np.sqrt(np.mean((phase_p[mask] - phase_classic[mask]) ** 2))) if np.any(mask) else np.nan
+    amp_rel_a = float(np.linalg.norm(amp_a - amp_classic) / max(np.linalg.norm(amp_classic), 1e-12))
+    amp_rel_b = float(np.linalg.norm(amp_b - amp_classic) / max(np.linalg.norm(amp_classic), 1e-12))
+    phase_rmse_a = float(np.sqrt(np.mean((phase_a[mask] - phase_classic[mask]) ** 2))) if np.any(mask) else np.nan
+    phase_rmse_b = float(np.sqrt(np.mean((phase_b[mask] - phase_classic[mask]) ** 2))) if np.any(mask) else np.nan
 
     return {
         "alpha": float(alpha),
         "ci_classic_gep": float(mode["ci"]),
-        "ci_hybrid_8pt": float(ci_h),
-        "ci_physics_only": float(ci_p),
-        "amp_rel_hybrid_8pt": amp_rel_h,
-        "amp_rel_physics_only": amp_rel_p,
-        "phase_rmse_hybrid_8pt": phase_rmse_h,
-        "phase_rmse_physics_only": phase_rmse_p,
+        "ci_run_a": float(ci_a),
+        "ci_run_b": float(ci_b),
+        "amp_rel_run_a": amp_rel_a,
+        "amp_rel_run_b": amp_rel_b,
+        "phase_rmse_run_a": phase_rmse_a,
+        "phase_rmse_run_b": phase_rmse_b,
     }
 
 
@@ -161,9 +166,9 @@ def main() -> None:
     device = torch.device(args.device)
     setup_matplotlib()
 
-    hybrid_run = args.base_dir / "hybrid_8pt"
-    physics_run = args.base_dir / "physics_only"
-    config = pd.read_csv(hybrid_run / "config.csv").iloc[0]
+    run_a = args.run_a_dir or (args.base_dir / "hybrid_8pt")
+    run_b = args.run_b_dir or (args.base_dir / "physics_only")
+    config = pd.read_csv(run_a / "config.csv").iloc[0]
     mach = float(config["mach"])
     alpha_values = np.linspace(float(config["alpha_min"]), float(config["alpha_max"]), int(args.num_alpha))
 
@@ -171,8 +176,8 @@ def main() -> None:
         compute_mode_metrics_at_alpha(
             alpha=float(alpha),
             mach=mach,
-            hybrid_run=hybrid_run,
-            physics_run=physics_run,
+            run_a=run_a,
+            run_b=run_b,
             n_y_pinn=int(args.n_y_pinn),
             device=device,
         )
@@ -181,24 +186,24 @@ def main() -> None:
     df = pd.DataFrame(rows)
 
     fig, axes = plt.subplots(2, 1, figsize=(10.8, 7.6), sharex=True)
-    axes[0].plot(df["alpha"], df["amp_rel_hybrid_8pt"], "--", color="#0b6e4f", linewidth=2.0, label="PINN hybride, 8 points")
-    axes[0].plot(df["alpha"], df["amp_rel_physics_only"], "-.", color="#c84c09", linewidth=2.0, label="PINN physique pure")
+    axes[0].plot(df["alpha"], df["amp_rel_run_a"], "--", color="#0b6e4f", linewidth=2.0, label=args.run_a_label)
+    axes[0].plot(df["alpha"], df["amp_rel_run_b"], "-.", color="#c84c09", linewidth=2.0, label=args.run_b_label)
     axes[0].set_ylabel("Relative amplitude error")
     axes[0].set_title(r"Mode reconstruction error vs $\alpha$ at fixed Mach")
     axes[0].legend()
 
-    axes[1].plot(df["alpha"], df["phase_rmse_hybrid_8pt"], "--", color="#0b6e4f", linewidth=2.0, label="PINN hybride, 8 points")
-    axes[1].plot(df["alpha"], df["phase_rmse_physics_only"], "-.", color="#c84c09", linewidth=2.0, label="PINN physique pure")
+    axes[1].plot(df["alpha"], df["phase_rmse_run_a"], "--", color="#0b6e4f", linewidth=2.0, label=args.run_a_label)
+    axes[1].plot(df["alpha"], df["phase_rmse_run_b"], "-.", color="#c84c09", linewidth=2.0, label=args.run_b_label)
     axes[1].set_xlabel(r"$\alpha$")
     axes[1].set_ylabel("Phase RMSE")
     axes[1].legend()
 
     fig.tight_layout()
-    fig_path = args.output_dir / "mode_error_vs_alpha.png"
+    fig_path = args.output_dir / f"{args.output_stem}.png"
     fig.savefig(fig_path, bbox_inches="tight")
     plt.close(fig)
 
-    csv_path = args.output_dir / "mode_error_vs_alpha.csv"
+    csv_path = args.output_dir / f"{args.output_stem}.csv"
     df.to_csv(csv_path, index=False)
 
     print(fig_path)
