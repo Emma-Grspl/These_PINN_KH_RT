@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 from pathlib import Path
 import sys
 
@@ -15,45 +14,15 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+from classical_solver.supersonic.blumen_reference import load_digitized_curves as load_supersonic_curves
+
 
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
 OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_gep"
 
 
-def parse_reference_level(csv_path: str) -> tuple[float | None, str, str]:
-    stem = Path(csv_path).stem.strip().replace("_", ".").replace(",", ".")
-    lower = stem.lower()
-    if lower.startswith("ci"):
-        value = float(lower[2:]) / 100.0
-        return value, fr"$c_r = 0,\; c_i = {value:.2f}$", "ci_special"
-    if lower.startswith("cr"):
-        value = float(lower[2:] or "0")
-        return value, fr"$c_i = 0,\; c_r = {value:.2f}$", "cr_special"
-    numeric = "".join(ch for ch in stem if ch.isdigit() or ch == ".")
-    if not numeric:
-        return None, stem, "unknown"
-    value = float(numeric)
-    return value, fr"$c_i = {value:.2f}$", "ci_level"
-
-
 def load_digitized_curves() -> list[dict]:
-    curves = []
-    for csv_file in sorted(glob.glob(str(DATA_DIR / "*.csv"))):
-        level, label, family = parse_reference_level(csv_file)
-        df = (
-            pd.read_csv(
-                csv_file,
-                header=None,
-                names=["Mach", "alpha"],
-                sep=";",
-                decimal=",",
-                engine="python",
-            )
-            .apply(pd.to_numeric, errors="coerce")
-            .dropna()
-        )
-        curves.append({"level": level, "label": label, "family": family, "data": df})
-    return curves
+    return load_supersonic_curves(DATA_DIR)
 
 
 def build_parser() -> argparse.ArgumentParser:

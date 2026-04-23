@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 from pathlib import Path
 import sys
 
@@ -14,42 +13,17 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from classical_solver.supersonic.shooting_supersonic import sample_supersonic_growth_map
+from classical_solver.supersonic.blumen_reference import (
+    load_digitized_curves,
+    parse_reference_level,
+)
 
 
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
 OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_shooting_supersonic"
 
-
-def parse_reference_level(csv_path: str) -> tuple[float | None, str, str]:
-    stem = Path(csv_path).stem.strip().replace("_", ".").replace(",", ".")
-    lower = stem.lower()
-    if lower.startswith("ci"):
-        value = float(lower[2:]) / 100.0
-        return value, fr"$c_r = 0,\; c_i = {value:.2f}$", "ci_special"
-    if lower.startswith("cr"):
-        value = float(lower[2:] or "0")
-        return value, fr"$c_i = 0,\; c_r = {value:.2f}$", "cr_special"
-    numeric = "".join(ch for ch in stem if ch.isdigit() or ch == ".")
-    if not numeric:
-        return None, stem, "unknown"
-    value = float(numeric)
-    return value, fr"$c_i = {value:.2f}$", "ci_level"
-
-
-def load_digitized_curves() -> list[dict]:
-    curves = []
-    for csv_file in sorted(glob.glob(str(DATA_DIR / "*.csv"))):
-        level, label, family = parse_reference_level(csv_file)
-        df = pd.read_csv(
-            csv_file,
-            header=None,
-            names=["Mach", "alpha"],
-            sep=";",
-            decimal=",",
-            engine="python",
-        ).apply(pd.to_numeric, errors="coerce").dropna()
-        curves.append({"level": level, "label": label, "family": family, "data": df})
-    return curves
+def load_digitized_curves_for_reconstruction() -> list[dict]:
+    return load_digitized_curves(DATA_DIR)
 
 
 def build_anchor_points(curves: list[dict]) -> list[dict]:
@@ -154,7 +128,7 @@ def main() -> None:
     machs = np.linspace(args.mach_min, args.mach_max, args.num_mach)
     alphas = np.linspace(args.alpha_min, args.alpha_max, args.num_alpha)
 
-    curves = load_digitized_curves()
+    curves = load_digitized_curves_for_reconstruction()
     anchors = build_anchor_points(curves)
     print("Echantillonnage supersonique par méthode du tir...")
     df = sample_supersonic_growth_map(

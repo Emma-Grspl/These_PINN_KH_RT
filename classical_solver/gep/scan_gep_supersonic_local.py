@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 from pathlib import Path
 import sys
 
@@ -16,7 +15,7 @@ if str(ROOT_DIR) not in sys.path:
 
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver
 from classical_solver.supersonic.mstab17_supersonic_solver import Mstab17SupersonicSolver
-from classical_solver.supersonic.reconstruct_blumen_supersonic_shooting import parse_reference_level
+from classical_solver.supersonic.blumen_reference import load_digitized_curves as load_supersonic_curves
 
 
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
@@ -24,25 +23,7 @@ OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_gep"
 
 
 def load_digitized_curves() -> list[dict]:
-    curves = []
-    for csv_file in sorted(glob.glob(str(DATA_DIR / "*.csv"))):
-        level, label, family = parse_reference_level(csv_file)
-        if family != "ci_level" or level is None:
-            continue
-        df = (
-            pd.read_csv(
-                csv_file,
-                header=None,
-                names=["Mach", "alpha"],
-                sep=";",
-                decimal=",",
-                engine="python",
-            )
-            .apply(pd.to_numeric, errors="coerce")
-            .dropna()
-        )
-        curves.append({"level": float(level), "label": label, "data": df})
-    return curves
+    return [curve for curve in load_supersonic_curves(DATA_DIR) if curve["family"] == "ci_level"]
 
 
 def build_parser() -> argparse.ArgumentParser:

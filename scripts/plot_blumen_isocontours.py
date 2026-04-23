@@ -6,6 +6,7 @@ import glob
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from classical_solver.supersonic.blumen_reference import load_supersonic_blumen_csv
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen"
@@ -36,11 +37,13 @@ def parse_growth_label(csv_path: str, regime: str) -> tuple[float, str]:
     value = float(numeric_part)
     formatted_value = f"{value:.3f}".rstrip("0").rstrip(".")
     if regime == "supersonic":
-        return value, fr"$c_i = 0,\; c_r = {formatted_value}$"
+        return value, fr"$c_i = {formatted_value}$"
     return value, formatted_value
 
 
-def load_curve(csv_path: str) -> pd.DataFrame:
+def load_curve(csv_path: str, regime: str) -> pd.DataFrame:
+    if regime == "supersonic":
+        return load_supersonic_blumen_csv(csv_path)
     df = pd.read_csv(
         csv_path,
         header=None,
@@ -80,7 +83,7 @@ def plot_regime(
     curves: list[tuple[float, str, pd.DataFrame]] = []
     for csv_file in csv_files:
         growth_value, growth_label = parse_growth_label(csv_file, regime=regime)
-        curves.append((growth_value, growth_label, load_curve(csv_file)))
+        curves.append((growth_value, growth_label, load_curve(csv_file, regime)))
 
     curves.sort(key=lambda item: item[0])
 

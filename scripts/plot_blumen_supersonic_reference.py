@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from classical_solver.supersonic.blumen_reference import load_supersonic_blumen_csv
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -29,12 +30,7 @@ def parse_label(csv_path: Path) -> tuple[float, str]:
 
 
 def load_curve(path: Path) -> pd.DataFrame:
-    return (
-        pd.read_csv(path, header=None, names=["Mach", "alpha"], sep=";", decimal=",", engine="python")
-        .apply(pd.to_numeric, errors="coerce")
-        .dropna()
-        .reset_index(drop=True)
-    )
+    return load_supersonic_blumen_csv(path)
 
 
 def build_parser() -> argparse.ArgumentParser:

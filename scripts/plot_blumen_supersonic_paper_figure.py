@@ -7,6 +7,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
+from classical_solver.supersonic.blumen_reference import load_supersonic_blumen_csv
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -15,12 +16,7 @@ DATA_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
 
 def load_curve(name: str) -> pd.DataFrame:
     path = DATA_DIR / name
-    return (
-        pd.read_csv(path, header=None, names=["Mach", "alpha"], sep=";", decimal=",", engine="python")
-        .apply(pd.to_numeric, errors="coerce")
-        .dropna()
-        .reset_index(drop=True)
-    )
+    return load_supersonic_blumen_csv(path)
 
 
 def nearest_point(df: pd.DataFrame, mach_target: float) -> tuple[float, float]:

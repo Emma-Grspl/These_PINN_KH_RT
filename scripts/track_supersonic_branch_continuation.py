@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 from pathlib import Path
 import sys
 
@@ -15,7 +14,10 @@ if str(ROOT_DIR) not in sys.path:
 from classical_solver.gep.build_supersonic_mode_database import OUTPUT_DIR, plot_isolines  # noqa: E402
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver  # noqa: E402
 from classical_solver.supersonic.mstab17_supersonic_solver import Mstab17SupersonicSolver  # noqa: E402
-from classical_solver.supersonic.reconstruct_blumen_supersonic_shooting import parse_reference_level  # noqa: E402
+from classical_solver.supersonic.blumen_reference import (  # noqa: E402
+    estimate_blumen_ci,
+    load_digitized_curves,
+)
 
 
 BLUMEN_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
@@ -91,55 +93,7 @@ def profile_stats(y: np.ndarray, p: np.ndarray) -> dict[str, float]:
 
 
 def load_blumen_ci_curves() -> list[dict]:
-    curves: list[dict] = []
-    for csv_file in sorted(glob.glob(str(BLUMEN_DIR / "*.csv"))):
-        level, label, family = parse_reference_level(csv_file)
-        if family != "ci_level" or level is None:
-            continue
-        df = (
-            pd.read_csv(
-                csv_file,
-                header=None,
-                names=["Mach", "alpha"],
-                sep=";",
-                decimal=",",
-                engine="python",
-            )
-            .apply(pd.to_numeric, errors="coerce")
-            .dropna()
-            .sort_values("alpha")
-            .reset_index(drop=True)
-        )
-        curves.append(
-            {
-                "level": float(level),
-                "label": label,
-                "data": df,
-            }
-        )
-    return curves
-
-
-def estimate_blumen_ci(alpha: float, mach: float, curves: list[dict]) -> float:
-    anchors: list[tuple[float, float]] = []
-    for curve in curves:
-        df = curve["data"]
-        alpha_min = float(df["alpha"].min())
-        alpha_max = float(df["alpha"].max())
-        if not (alpha_min <= alpha <= alpha_max):
-            continue
-        mach_on_curve = float(np.interp(alpha, df["alpha"], df["Mach"]))
-        anchors.append((mach_on_curve, float(curve["level"])))
-
-    if len(anchors) < 2:
-        return float("nan")
-
-    anchors = sorted(anchors, key=lambda item: item[0])
-    mach_grid = np.array([item[0] for item in anchors], dtype=float)
-    ci_grid = np.array([item[1] for item in anchors], dtype=float)
-    if mach < float(np.min(mach_grid)) or mach > float(np.max(mach_grid)):
-        return float("nan")
-    return float(np.interp(mach, mach_grid, ci_grid))
+    return [curve for curve in load_digitized_curves(BLUMEN_DIR) if curve["family"] == "ci_level"]
 
 
 def build_candidate_row(

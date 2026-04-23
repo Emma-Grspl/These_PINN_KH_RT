@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import glob
 from pathlib import Path
 import sys
 
@@ -16,8 +15,8 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from classical_solver.gep.build_supersonic_mode_database import solve_point
+from classical_solver.supersonic.blumen_reference import load_digitized_curves as load_supersonic_curves
 from classical_solver.supersonic.mstab17_supersonic_solver import Mstab17SupersonicSolver
-from classical_solver.supersonic.reconstruct_blumen_supersonic_shooting import parse_reference_level
 
 
 DATA_DIR = ROOT_DIR / "KH_RT_Blumen" / "supersonic"
@@ -25,33 +24,7 @@ OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_gep"
 
 
 def load_digitized_curves() -> list[dict]:
-    curves: list[dict] = []
-    for csv_file in sorted(glob.glob(str(DATA_DIR / "*.csv"))):
-        level, label, family = parse_reference_level(csv_file)
-        df = (
-            pd.read_csv(
-                csv_file,
-                header=None,
-                names=["Mach", "alpha"],
-                sep=";",
-                decimal=",",
-                engine="python",
-            )
-            .apply(pd.to_numeric, errors="coerce")
-            .dropna()
-            .reset_index(drop=True)
-        )
-        curves.append(
-            {
-                "csv_path": csv_file,
-                "stem": Path(csv_file).stem,
-                "level": None if level is None else float(level),
-                "label": label,
-                "family": family,
-                "data": df,
-            }
-        )
-    return curves
+    return load_supersonic_curves(DATA_DIR)
 
 
 def build_parser() -> argparse.ArgumentParser:
