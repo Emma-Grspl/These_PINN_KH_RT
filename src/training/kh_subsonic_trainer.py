@@ -18,6 +18,7 @@ from src.data.kh_subsonic_sampling import (
 from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
 from src.physics.kh_subsonic_residual import (
     boundary_decay_loss,
+    first_order_stabilization_losses,
     integral_normalization_loss,
     local_peak_envelope_losses,
     localization_moment_losses,
@@ -101,6 +102,9 @@ class KHSubsonicTrainingConfig:
     w_peak_curvature: float = 0.0
     w_loc_center: float = 0.0
     w_loc_spread: float = 0.0
+    w_first_order_v_energy: float = 0.0
+    w_first_order_amp_cap: float = 0.0
+    first_order_amp_cap: float = 2.0
     w_ci_supervision: float = 5.0
     w_ci_stability_outside: float = 0.0
     w_ci_neutrality: float = 0.0
@@ -777,6 +781,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_riccati_boundary_band_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_boundary_band_q = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_shooting_match = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_first_order_v_energy = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_first_order_amp_cap = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_stability_outside = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_neutrality = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_low_alpha_zero = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -905,6 +911,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 loss_phase = phase_loss(model, xi_ref, alpha_anchor)
                 loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
                 loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
+                loss_first_order_v_energy, loss_first_order_amp_cap = first_order_stabilization_losses(
+                    model,
+                    xi_norm,
+                    alpha_norm,
+                    amp_cap=cfg.first_order_amp_cap,
+                )
             loss_mode = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -915,6 +927,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_peak_curvature * loss_peak_curvature
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
+                + cfg.w_first_order_v_energy * loss_first_order_v_energy
+                + cfg.w_first_order_amp_cap * loss_first_order_amp_cap
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
                 + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
@@ -1000,6 +1014,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 loss_phase = phase_loss(model, xi_ref, alpha_anchor)
                 loss_peak_slope, loss_peak_curvature = local_peak_envelope_losses(model, xi_ref, alpha_anchor)
                 loss_loc_center, loss_loc_spread = localization_moment_losses(model, xi_norm, alpha_norm)
+                loss_first_order_v_energy, loss_first_order_amp_cap = first_order_stabilization_losses(
+                    model,
+                    xi_norm,
+                    alpha_norm,
+                    amp_cap=cfg.first_order_amp_cap,
+                )
             loss = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -1010,6 +1030,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_peak_curvature * loss_peak_curvature
                 + cfg.w_loc_center * loss_loc_center
                 + cfg.w_loc_spread * loss_loc_spread
+                + cfg.w_first_order_v_energy * loss_first_order_v_energy
+                + cfg.w_first_order_amp_cap * loss_first_order_amp_cap
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
                 + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
@@ -1041,6 +1063,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_peak_curvature": float(loss_peak_curvature.item()),
             "loss_loc_center": float(loss_loc_center.item()),
             "loss_loc_spread": float(loss_loc_spread.item()),
+            "loss_first_order_v_energy": float(loss_first_order_v_energy.item()),
+            "loss_first_order_amp_cap": float(loss_first_order_amp_cap.item()),
             "loss_riccati_anchor": float(loss_riccati_anchor.item()),
             "loss_q_supervision": float(loss_q_supervision.item()),
             "loss_riccati_center_kappa": float(loss_riccati_center_kappa.item()),

@@ -527,6 +527,28 @@ def local_peak_envelope_losses(
     return slope_loss, curvature_loss
 
 
+def first_order_stabilization_losses(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    *,
+    amp_cap: float = 2.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if getattr(model, "mode_representation", "cartesian") != "first_order_real":
+        zero = torch.zeros(1, device=xi.device, dtype=xi.dtype).mean()
+        return zero, zero
+
+    pred = model(xi, alpha)
+    pr = pred[:, 0:1]
+    pi = pred[:, 1:2]
+    vr = pred[:, 2:3]
+    vi = pred[:, 3:4]
+    amp2 = pr.pow(2) + pi.pow(2)
+    v_energy = torch.mean(vr.pow(2) + vi.pow(2))
+    amp_cap_loss = torch.mean(torch.relu(amp2 - float(amp_cap) ** 2).pow(2))
+    return v_energy, amp_cap_loss
+
+
 def pressure_ode_residual_2d(
     model,
     xi: torch.Tensor,
