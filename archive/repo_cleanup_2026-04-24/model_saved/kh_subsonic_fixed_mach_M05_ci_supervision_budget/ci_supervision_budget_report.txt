@@ -1,0 +1,4 @@
+target_ci_mae=2.000000000000e-02
+counts=4,8,16,32,64,128
+min_count_meeting_target_best=4
+min_count_meeting_target_last=4

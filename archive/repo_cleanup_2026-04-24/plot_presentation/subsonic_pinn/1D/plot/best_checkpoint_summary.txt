@@ -1,0 +1,9 @@
+Experts
+best_epoch=3700
+best_metrics: ci_mae=0.003082, p_rel=0.297547, env=0.239732, phase=0.113141, peak=2.227275, metric=0.883945
+final_metrics: ci_mae=0.002849, p_rel=0.337533, env=0.280950, phase=0.112279, peak=2.174245, metric=0.909142
+
+Experts + light anchor
+best_epoch=4900
+best_metrics: ci_mae=0.002618, p_rel=0.278360, env=0.234797, phase=0.103682, peak=2.174245, metric=0.856383
+final_metrics: ci_mae=0.004225, p_rel=0.320823, env=0.266294, phase=0.116198, peak=2.359851, metric=0.956602

@@ -1,0 +1,2 @@
+alpha,Mach,n_points,n_raw_modes,n_inside_blumen_box,nearest_cr,nearest_ci,nearest_distance_to_blumen,min_err_cr,min_err_ci,blumen_cr,blumen_ci
+0.2,1.2,121,77,0,0.25786823934982545,0.03961670067015958,0.03078228776428065,0.020893046981665164,0.007570336818772047,0.23697519236816028,0.06222266952409093

@@ -1,0 +1,2 @@
+mach,alpha_min,alpha_max,epochs,learning_rate,hidden_dim,mode_depth,ci_depth,activation,fourier_features,fourier_scale,initial_ci,mapping_scale,trainable_mapping_scale,n_interior,n_boundary,n_alpha_supervision,n_reference_alpha,n_audit_alpha,audit_every,checkpoint_every,focus_fraction,focus_half_width,error_threshold,max_focus_points,w_pde,w_bc,w_norm,w_phase,w_ci_supervision,output_dir,device
+0.0,0.05,0.95,3000,0.001,128,4,2,tanh,0,2.0,0.2,3.0,False,512,64,128,81,41,100,500,0.6,0.03,0.01,8,1.0,10.0,1.0,1.0,5.0,model_saved/kh_subsonic_fixed_mach_M00_adaptive,cuda
