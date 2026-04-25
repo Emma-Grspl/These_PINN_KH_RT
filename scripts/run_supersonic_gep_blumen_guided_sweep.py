@@ -18,6 +18,8 @@ from classical_solver.gep.build_supersonic_mode_database import OUTPUT_DIR  # no
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver  # noqa: E402
 from classical_solver.supersonic.mstab17_supersonic_solver import Mstab17SupersonicSolver  # noqa: E402
 from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
+    DEFAULT_BLUMEN_CI_POINTS,
+    DEFAULT_BLUMEN_CR_POINTS,
     build_blumen_targets,
     load_digitized_long,
 )
@@ -215,8 +217,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mapping-scale", type=float, default=1.5)
     parser.add_argument("--cubic-delta", type=float, default=0.2)
     parser.add_argument("--xi-max", type=float, default=0.90)
-    parser.add_argument("--cr-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_cr_digitized_points.csv")
-    parser.add_argument("--ci-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_ci_digitized_points.csv")
+    parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
+    parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
     parser.add_argument("--cr-min", type=float, default=0.0)
     parser.add_argument("--cr-max", type=float, default=0.9)
     parser.add_argument("--ci-min", type=float, default=1e-5)

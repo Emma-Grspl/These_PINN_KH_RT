@@ -13,6 +13,8 @@ import pandas as pd
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_gep"
+DEFAULT_BLUMEN_CR_POINTS = ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_cr_digitized_points.csv"
+DEFAULT_BLUMEN_CI_POINTS = ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_ci_digitized_points.csv"
 
 
 def numeric_level(label: str) -> float | None:
@@ -305,8 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Audit des familles supersoniques contre Blumen c_r/c_i.")
     parser.add_argument("--alpha", type=float, default=0.2)
     parser.add_argument("--mach-values", type=float, nargs="+", default=[1.20, 1.25, 1.275, 1.30])
-    parser.add_argument("--cr-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_cr_digitized_points.csv")
-    parser.add_argument("--ci-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_ci_digitized_points.csv")
+    parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
+    parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
     parser.add_argument(
         "--candidate-csv",
         type=Path,

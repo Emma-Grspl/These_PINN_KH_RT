@@ -17,6 +17,8 @@ if str(ROOT_DIR) not in sys.path:
 from classical_solver.gep.build_supersonic_mode_database import OUTPUT_DIR  # noqa: E402
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver  # noqa: E402
 from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
+    DEFAULT_BLUMEN_CI_POINTS,
+    DEFAULT_BLUMEN_CR_POINTS,
     build_blumen_targets,
     load_digitized_long,
 )
@@ -33,8 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--xi-max", type=float, default=0.90)
     parser.add_argument("--max-abs-c", type=float, default=10.0)
     parser.add_argument("--positive-ci-only", action="store_true", default=True)
-    parser.add_argument("--cr-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_cr_digitized_points.csv")
-    parser.add_argument("--ci-points", type=Path, default=ROOT_DIR / "assets" / "blumen" / "supersonic_ci_digitized_points.csv")
+    parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
+    parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
     parser.add_argument("--cr-box-tol", type=float, default=0.03)
     parser.add_argument("--ci-box-tol", type=float, default=0.015)
     parser.add_argument("--top-k-nearest", type=int, default=12)
