@@ -26,6 +26,12 @@ from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
 )
 
 
+def trapezoid_compat(y: np.ndarray, x: np.ndarray) -> float:
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(y, x))
+    return float(np.trapz(y, x))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Comparaison directe des candidats GEP supersoniques avec le mode shooting voisin de Blumen."
@@ -172,8 +178,9 @@ def extract_shooting_mode(
 
 def profile_diagnostics(y: np.ndarray, p: np.ndarray) -> dict[str, float]:
     p_abs = np.abs(p)
-    centroid_abs_y = float(np.trapezoid(np.abs(y) * p_abs, y) / max(np.trapezoid(p_abs, y), 1e-12))
-    spread_abs_y = float(np.sqrt(max(np.trapezoid((y**2) * p_abs, y) / max(np.trapezoid(p_abs, y), 1e-12), 0.0)))
+    norm = max(trapezoid_compat(p_abs, y), 1e-12)
+    centroid_abs_y = float(trapezoid_compat(np.abs(y) * p_abs, y) / norm)
+    spread_abs_y = float(np.sqrt(max(trapezoid_compat((y**2) * p_abs, y) / norm, 0.0)))
     peak_y = float(y[int(np.argmax(p_abs))])
     return {
         "centroid_abs_y": centroid_abs_y,
