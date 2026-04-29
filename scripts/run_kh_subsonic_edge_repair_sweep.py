@@ -300,9 +300,9 @@ def main() -> None:
                 device=str(args.device),
                 output_dir=run_dir,
             )
-            result = train_fixed_mach_subsonic_pinn(cfg)
-            save_training_artifacts(result, run_dir)
-            summary = summarize_history(result.history)
+            model, history = train_fixed_mach_subsonic_pinn(cfg)
+            save_training_artifacts(model, history, cfg)
+            summary = summarize_history(history)
             row = {
                 "alpha": alpha,
                 "family": profile.family,
