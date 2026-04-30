@@ -1,0 +1,2 @@
+mach,alpha,representation,representation_label,run_dir,best_epoch,best_ci_mae,best_p_rel,best_env,best_phase,last_epoch,last_ci_mae,last_p_rel,last_env,last_phase
+0.5,0.5,cartesian,Re/Im,results/_smoke_representation_ablation/alpha_0.500_cartesian,1,0.06778327913635779,7.537089392659807,7.521681114957939,0.12030156120933987,1,0.06778327913635779,7.537089392659807,7.521681114957939,0.12030156120933987

@@ -1,0 +1,9 @@
+{
+  "global_mae_omega": 0.0024696114474529285,
+  "global_median_distance": 0.0034275562237580763,
+  "source_counts": {
+    "primary": 146,
+    "stable": 56,
+    "secondary": 23
+  }
+}

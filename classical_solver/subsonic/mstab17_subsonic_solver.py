@@ -244,10 +244,12 @@ class Mstab17SubsonicSolver:
         phi_right_0 = self._interp_component(0.0, sol_right, 3)
         phase_shift = phi_left_0 - phi_right_0
 
-        mode_left = abs_p_left * np.cos(phi_left)
-        mode_right = abs_p_right * np.cos(phi_right + phase_shift)
+        mode_left_re = abs_p_left * np.cos(phi_left)
+        mode_right_re = abs_p_right * np.cos(phi_right + phase_shift)
+        mode_left_im = abs_p_left * np.sin(phi_left)
+        mode_right_im = abs_p_right * np.sin(phi_right + phase_shift)
 
-        fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+        fig, axes = plt.subplots(2, 3, figsize=(15, 9))
         axes[0, 0].plot(y_left, abs_p_left, label="Left")
         axes[0, 0].plot(y_right, abs_p_right, "--", label="Right")
         axes[0, 0].set_title(r"Amplitude $|p|$")
@@ -262,18 +264,30 @@ class Mstab17SubsonicSolver:
         axes[0, 1].grid(True, alpha=0.3)
         axes[0, 1].legend()
 
-        axes[1, 0].plot(y_left, mode_left, label="Left")
-        axes[1, 0].plot(y_right, mode_right, "--", label="Right")
+        axes[0, 2].plot(y_left, phi_left, label=r"$\phi$ left")
+        axes[0, 2].plot(y_right, phi_right + phase_shift, "--", label=r"$\phi$ right")
+        axes[0, 2].set_title(r"Phase $\phi$")
+        axes[0, 2].grid(True, alpha=0.3)
+        axes[0, 2].legend()
+
+        axes[1, 0].plot(y_left, mode_left_re, label="Left")
+        axes[1, 0].plot(y_right, mode_right_re, "--", label="Right")
         axes[1, 0].set_title(r"Mode physique $\Re(p)$")
         axes[1, 0].grid(True, alpha=0.3)
         axes[1, 0].legend()
 
-        yy = np.linspace(-result.y_limit, result.y_limit, 400)
-        axes[1, 1].plot(yy, np.tanh(yy), label=r"$U(y)=\tanh(y)$")
-        axes[1, 1].axhline(0.0, color="k", linewidth=0.8, alpha=0.4)
-        axes[1, 1].set_title("Profil moyen")
+        axes[1, 1].plot(y_left, mode_left_im, label="Left")
+        axes[1, 1].plot(y_right, mode_right_im, "--", label="Right")
+        axes[1, 1].set_title(r"Mode physique $\Im(p)$")
         axes[1, 1].grid(True, alpha=0.3)
         axes[1, 1].legend()
+
+        yy = np.linspace(-result.y_limit, result.y_limit, 400)
+        axes[1, 2].plot(yy, np.tanh(yy), label=r"$U(y)=\tanh(y)$")
+        axes[1, 2].axhline(0.0, color="k", linewidth=0.8, alpha=0.4)
+        axes[1, 2].set_title("Profil moyen")
+        axes[1, 2].grid(True, alpha=0.3)
+        axes[1, 2].legend()
 
         fig.suptitle(
             f"mstab17 subsonic | alpha={self.alpha:.3f}, M={self.Mach:.3f}, "

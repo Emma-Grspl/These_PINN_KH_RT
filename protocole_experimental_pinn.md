@@ -33,7 +33,8 @@ Ce document résume l'état du travail PINN, ce qui a déjà été essayé, ce q
 - comparaison mode PINN vs mode classique sur plusieurs `alpha`
 - run `modefocus_lowalpha` pour renforcer l'apprentissage des bas `alpha`
 - formulation premier ordre réel
-- préparation de variantes stabilisées et variantes inspirées du système de Riccati
+- formulation premier ordre réel stabilisée
+- préparation de variantes inspirées du système de Riccati
 
 ### Ce que les expériences ont montré
 
@@ -43,6 +44,51 @@ Ce document résume l'état du travail PINN, ce qui a déjà été essayé, ce q
 - le run `modefocus_lowalpha` améliore un peu la phase
 - cette amélioration se paie par une dégradation partielle de l'amplitude
 - une faible erreur scalaire ne suffit pas à conclure que le mode est bien reconstruit
+- les formulations `first_order_real` et `first_order_real_stabilized` peuvent retrouver un bon `c_i`, mais restent très mauvaises pour le mode
+
+### Cas `first_order_real_stabilized`
+
+Le run `first_order_real_stabilized` a clarifié un point important :
+
+- la stabilisation améliore le comportement numérique global
+- `c_i` redevient bon, avec un `best_ci_mae` de l'ordre de `4e-3`
+- mais la reconstruction modale reste très mauvaise
+
+En particulier :
+
+- `p_rel` reste autour de `4.4`
+- `env` reste autour de `4.4`
+- la phase ne compense pas cette erreur structurelle
+
+Donc :
+
+- cette formulation ne résout pas le problème du mode
+- elle produit encore un bon scalaire spectral avec une eigenfonction fausse
+- elle ne constitue pas une base crédible pour la suite, sauf justification théorique nouvelle
+
+### Pourquoi cette piste est abandonnée pour l'instant
+
+La branche `first_order_real` est abandonnée à ce stade pour une raison simple :
+
+- elle ne traite pas le vrai verrou expérimental, qui est la reconstruction du mode
+
+Plus précisément :
+
+- la version non stabilisée est numériquement trop instable
+- la version stabilisée corrige surtout le comportement d'optimisation
+- mais ne corrige pas l'identifiabilité de l'eigenfonction
+
+Autrement dit :
+
+- elle permet de retrouver un bon `c_i`
+- sans forcer le réseau à converger vers le bon mode
+
+Ce résultat est méthodologiquement suffisant pour arrêter d'investir sur cette piste dans l'immédiat :
+
+- le problème n'est pas seulement un manque de stabilisation
+- il est plus probablement lié au choix des variables, à la normalisation, aux conditions de bord et à la façon dont la loss identifie le mode
+
+La branche `first_order_real` ne sera donc réouverte que si une motivation théorique nouvelle apparaît.
 
 ### Difficultés rencontrées
 
@@ -50,7 +96,7 @@ Ce document résume l'état du travail PINN, ce qui a déjà été essayé, ce q
 - la phase est la partie la plus fragile
 - amplitude et phase ne progressent pas forcément ensemble
 - le découpage amplitude/phase peut introduire des ambiguïtés d'optimisation
-- la formulation premier ordre réel testée jusqu'ici a montré un comportement instable et des erreurs modales très élevées
+- les formulations premier ordre réel testées jusqu'ici ont montré soit une instabilité forte, soit une stabilisation insuffisante pour corriger le mode
 
 ### Position méthodologique actuelle
 
@@ -60,11 +106,136 @@ Ce document résume l'état du travail PINN, ce qui a déjà été essayé, ce q
 
 ### Ce qu'il reste à faire ensuite
 
-- finaliser l'évaluation des variantes stabilisées premier ordre réel et des variantes Riccati
+- ne plus prioriser la branche `first_order_real`
+- concentrer les essais sur les formulations Riccati, multibranch ou autres formulations mieux adaptées à la structure spectrale
 - décider si la sortie réseau doit rester en amplitude/phase ou passer à une autre représentation réelle plus robuste
 - mieux contrôler les conditions de bord et la normalisation modale
 - introduire si nécessaire une supervision modale légère et ciblée, surtout à bas `alpha`
 - une fois le cas `Mach` fixé satisfaisant, étendre le modèle à `(alpha, Mach)`
+
+### Plan d'expériences local pour débloquer la reconstruction du mode
+
+L'objectif immédiat n'est pas de lancer une grande campagne Jean Zay, mais d'identifier localement quelle formulation donne le meilleur compromis amplitude/phase à coût raisonnable.
+
+Le principe retenu est :
+
+- faire peu de runs
+- sur peu de cas
+- avec une comparaison propre entre formulations
+
+#### Banc d'essai minimal
+
+On fixe :
+
+- `Mach = 0.5`
+- supervision légère de `c_i` avec 8 points
+- trois valeurs de `alpha` représentatives :
+  - `alpha = 0.2`
+  - `alpha = 0.5`
+  - `alpha = 0.8`
+
+Ce choix permet de séparer :
+
+- la zone bas `alpha` où le mode échoue
+- une zone intermédiaire
+- une zone haut `alpha` où le comportement est meilleur
+
+#### Vérité terrain utilisée
+
+Pour chaque cas, on compare au classique sur :
+
+- `c_i`
+- amplitude
+- phase
+- éventuellement `Re(p)` et `Im(p)` si nécessaire
+
+#### Métriques à suivre
+
+Chaque formulation doit être évaluée avec les mêmes métriques :
+
+- `ci_mae`
+- erreur d'enveloppe
+- erreur de phase
+- erreur relative complexe globale sur `p`
+- courbe d'erreur en fonction de `alpha`
+
+Le critère de décision n'est pas la loss totale, mais :
+
+- la qualité du mode à `c_i` comparable
+- la stabilité entre runs
+- l'amélioration à bas `alpha`
+
+#### Ordre des tests
+
+Il faut éviter de tout changer à la fois.
+
+Ordre recommandé :
+
+1. comparer les représentations de sortie
+2. puis comparer les normalisations
+3. puis comparer les conditions de bord
+
+#### Bloc A : représentations à comparer
+
+Premier bloc de tests :
+
+- formulation actuelle amplitude/phase
+- formulation `Re/Im`
+- formulation `log-amplitude + phase`
+- formulation Riccati ou premier ordre dérivé de `p'/p` si le coût d'implémentation reste raisonnable
+
+Ici, tout le reste doit rester identique :
+
+- même architecture
+- même budget d'entraînement
+- même supervision `c_i`
+- mêmes poids de loss autant que possible
+
+#### Bloc B : normalisations à comparer
+
+Une fois la meilleure représentation identifiée, comparer plusieurs normalisations :
+
+- ancre ponctuelle
+- amplitude maximale normalisée à 1
+- norme `L2` fixée
+- phase fixée au point de pic
+
+L'objectif est de réduire les degrés de liberté résiduels qui laissent la loss physique sous-déterminer le mode.
+
+#### Bloc C : conditions de bord à comparer
+
+Une fois la représentation et la normalisation fixées, comparer :
+
+- BC faibles de type Dirichlet
+- BC asymptotiques exponentielles
+- BC sur la dérivée logarithmique
+
+Le but est de voir si l'échec vient surtout de la représentation interne ou d'un mauvais verrouillage des bords.
+
+#### Décision pratique
+
+Une formulation sera retenue pour la suite si, à `c_i` comparable :
+
+- elle améliore clairement l'amplitude
+- elle améliore clairement la phase
+- surtout à bas `alpha`
+- sans dégrader fortement les cas moyens et hauts `alpha`
+
+#### Pourquoi ces tests peuvent être faits en local
+
+Ce protocole est volontairement léger :
+
+- peu d'alphas
+- `Mach` fixé
+- comparaison ciblée
+
+Il est donc adapté à des essais locaux, ce qui évite de dépendre trop tôt de Jean Zay tant que la bonne formulation n'est pas identifiée.
+
+Jean Zay ne doit servir qu'après ce tri initial, pour :
+
+- confirmer la meilleure formulation
+- élargir la grille
+- lancer les campagnes plus lourdes
 
 ## PINN supersonique
 
@@ -117,4 +288,3 @@ Tant que le classique n'identifie pas de manière stable la bonne branche, entra
 
 - ne rien figer tant que le classique supersonique n'est pas proprement verrouillé
 - préparer seulement les choix de formulation et les métriques d'audit
-

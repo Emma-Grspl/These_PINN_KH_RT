@@ -74,6 +74,9 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 - à `Mach = 1.3`, le shooting décroche vers une autre branche
 - les familles GEP sélectionnées jusque-là ne reproduisent pas la bonne croissance
 - le sweep guidé par Blumen trouve un `c_r` souvent plausible, mais un `c_i` trop faible, de l'ordre de `0.006-0.008` au lieu de `0.047-0.062`
+- le diagnostic du spectre brut contre Blumen montre `n_inside_blumen_box = 0` sur les cas cibles `alpha = 0.2`, `Mach = 1.2, 1.25, 1.275, 1.3`
+- les meilleurs modes bruts en `c_r` restent bloqués vers `c_i ≈ 0.003-0.004`, donc bien en dessous du mode instable attendu
+- la comparaison directe candidats GEP vs mode shooting confirme que l'écart principal n'est pas un mauvais tri local : les candidats GEP proches en `c_r` restent très loin du bon `c_i`
 
 ### Pistes déjà explorées
 
@@ -86,10 +89,21 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 ### Ce que ces essais ont montré
 
 - le problème principal n'est plus seulement le sélecteur de branche
-- il est possible que le GEP ne fasse pas apparaître la branche Blumen dans le sous-ensemble de modes qu'on regarde
+- le GEP brut ne fait pas apparaître la branche fortement instable recherchée aux points audités
+- en pratique, on observe une famille GEP à `c_r` parfois plausible mais à `c_i` trop faible, donc une branche quasi neutre qui peut mimer la bonne vitesse de phase sans porter la bonne croissance
 - il faut donc distinguer deux questions :
   - la branche Blumen existe-t-elle dans le spectre brut
   - si oui, pourquoi n'est-elle pas sélectionnée
+
+### Pourquoi on bascule de GEP vers shooting
+
+- on ne s'acharne pas sur le GEP à ce stade parce que le dernier verrou n'est plus un problème de ranking, mais un problème d'existence de la bonne branche instable dans le spectre exploité
+- tant que le spectre brut ne montre pas de mode proche de Blumen simultanément en `c_r` et en `c_i`, raffiner le sélecteur GEP ne peut pas régler le fond du problème
+- le shooting est donc utilisé comme solveur de référence pour verrouiller une branche physiquement cohérente le long d'une ligne de Mach
+- une fois cette branche shooting stabilisée, elle sert à répondre proprement à la question importante :
+  - le GEP rate-t-il seulement la sélection
+  - ou bien la formulation GEP actuelle manque réellement la branche instable
+- en d'autres termes, le shooting n'est pas un contournement définitif du GEP ; c'est l'outil le plus direct pour établir d'abord une branche de référence crédible, puis auditer le GEP contre elle
 
 ### Difficultés rencontrées
 
@@ -100,11 +114,11 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 
 ### Ce qu'il reste à faire
 
-- lancer et analyser le diagnostic du spectre brut contre Blumen
-- déterminer si la branche Blumen existe dans le spectre GEP brut aux points cibles
-- si elle existe, corriger le filtrage ou le ranking
-- si elle n'existe pas, revoir la formulation GEP, la résolution ou les paramètres numériques
-- verrouiller un protocole de suivi de branche valable sur une ligne de Mach puis sur une grille `(alpha, Mach)`
+- consolider la continuation shooting sur une ligne de Mach pour verrouiller simultanément `c_r` et `c_i`
+- utiliser cette branche shooting comme référence d'audit contre le GEP
+- si le GEP reste loin en `c_i`, revoir la formulation GEP, la résolution ou les paramètres numériques
+- si une branche GEP pertinente réapparaît après cela, seulement alors revenir à un protocole de sélection/ranking
+- ensuite verrouiller un protocole valable sur une grille `(alpha, Mach)`
 - une fois la bonne branche trouvée, reconstruire des modes et refaire les isolignes sans utiliser Blumen comme seed, seulement comme audit
 
 ### Position méthodologique retenue
@@ -112,4 +126,3 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 - Blumen sert de référence externe
 - le solveur classique ne doit pas dépendre de Blumen pour produire ses solutions
 - Blumen sert à valider la bonne branche, pas à la fabriquer
-
