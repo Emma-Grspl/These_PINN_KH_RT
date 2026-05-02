@@ -823,14 +823,28 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 dci_dalpha = torch.autograd.grad(ci_spectral.sum(), alpha_spectral, create_graph=True)[0]
                 loss_ci_smoothness = torch.mean(dci_dalpha.pow(2))
 
+        loss_ci_regularization = (
+            cfg.w_ci_stability_outside * loss_ci_stability_outside
+            + cfg.w_ci_neutrality * loss_ci_neutrality
+            + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
+            + cfg.w_ci_smoothness * loss_ci_smoothness
+        )
+        has_ci_branch_objective = (
+            stage_w_ci_supervision > 0.0
+            or cfg.w_ci_stability_outside > 0.0
+            or cfg.w_ci_neutrality > 0.0
+            or cfg.w_ci_low_alpha_zero > 0.0
+            or cfg.w_ci_smoothness > 0.0
+        )
+
         if cfg.separate_branch_optimizers:
-            if ci_optimizer is not None and stage_w_ci_supervision > 0.0:
+            if ci_optimizer is not None and has_ci_branch_objective:
                 ci_optimizer.zero_grad()
-                loss_ci_branch = stage_w_ci_supervision * loss_ci
+                loss_ci_branch = stage_w_ci_supervision * loss_ci + loss_ci_regularization
                 loss_ci_branch.backward()
                 ci_optimizer.step()
             else:
-                loss_ci_branch = stage_w_ci_supervision * loss_ci.detach()
+                loss_ci_branch = stage_w_ci_supervision * loss_ci.detach() + loss_ci_regularization.detach()
 
             mode_optimizer.zero_grad()
             ci_for_mode = model.get_ci(alpha_interior).detach() if cfg.detach_ci_in_mode_branch else None
@@ -936,14 +950,10 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
-                + cfg.w_ci_stability_outside * loss_ci_stability_outside
-                + cfg.w_ci_neutrality * loss_ci_neutrality
-                + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
-                + cfg.w_ci_smoothness * loss_ci_smoothness
             )
             loss_mode.backward()
             mode_optimizer.step()
-            loss = loss_mode + loss_ci_branch
+            loss = loss_mode.detach() + loss_ci_branch.detach()
         else:
             res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
             loss_pde = torch.mean(res_r.pow(2) + res_i.pow(2))
@@ -1039,10 +1049,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
-                + cfg.w_ci_stability_outside * loss_ci_stability_outside
-                + cfg.w_ci_neutrality * loss_ci_neutrality
-                + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
-                + cfg.w_ci_smoothness * loss_ci_smoothness
+                + loss_ci_regularization
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
