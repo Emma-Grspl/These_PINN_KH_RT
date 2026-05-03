@@ -147,6 +147,8 @@ class KHSubsonicTrainingConfig:
     mode_low_alpha_threshold: float = 0.25
     mode_low_alpha_weight: float = 1.0
     mode_low_alpha_audit_fraction: float = 0.6
+    initial_model_path: str | None = None
+    initial_model_strict: bool = True
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
     device: str = "cpu"
 
@@ -613,6 +615,21 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         alpha_split_threshold=cfg.alpha_split_threshold,
     ).to(device)
     model.mach = float(cfg.mach)
+    if cfg.initial_model_path:
+        initial_model_path = Path(cfg.initial_model_path)
+        if not initial_model_path.exists():
+            raise FileNotFoundError(f"Initial model path not found: {initial_model_path}")
+        state_dict = torch.load(initial_model_path, map_location=device)
+        if cfg.initial_model_strict:
+            model.load_state_dict(state_dict)
+            print(f"Warm start loaded from {initial_model_path} (strict=True)")
+        else:
+            incompatible = model.load_state_dict(state_dict, strict=False)
+            print(
+                "Warm start loaded from "
+                f"{initial_model_path} (strict=False, missing={list(incompatible.missing_keys)}, "
+                f"unexpected={list(incompatible.unexpected_keys)})"
+            )
     if cfg.freeze_ci:
         if model.ci_net is not None:
             for param in model.ci_net.parameters():
