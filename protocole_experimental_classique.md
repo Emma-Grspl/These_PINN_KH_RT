@@ -70,13 +70,15 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 ### Résultats déjà clarifiés
 
 - les figures supersoniques de Blumen représentent bien `c_r` et `c_i`, pas `omega_i`
-- le shooting par défaut semble cohérent avec Blumen pour `alpha = 0.2` et `Mach = 1.2, 1.25, 1.275`
-- à `Mach = 1.3`, le shooting décroche vers une autre branche
+- le shooting retrouve une branche instable auto-cohérente sur `alpha = 0.2` et `Mach = 1.2, 1.25, 1.275, 1.3`
+- cette branche est cohérente asymptotiquement et reproduit correctement `c_i`
 - les familles GEP sélectionnées jusque-là ne reproduisent pas la bonne croissance
 - le sweep guidé par Blumen trouve un `c_r` souvent plausible, mais un `c_i` trop faible, de l'ordre de `0.006-0.008` au lieu de `0.047-0.062`
 - le diagnostic du spectre brut contre Blumen montre `n_inside_blumen_box = 0` sur les cas cibles `alpha = 0.2`, `Mach = 1.2, 1.25, 1.275, 1.3`
 - les meilleurs modes bruts en `c_r` restent bloqués vers `c_i ≈ 0.003-0.004`, donc bien en dessous du mode instable attendu
 - la comparaison directe candidats GEP vs mode shooting confirme que l'écart principal n'est pas un mauvais tri local : les candidats GEP proches en `c_r` restent très loin du bon `c_i`
+- l'audit d'eigenconditions montre que l'écart résiduel à Blumen est presque entièrement porté par `c_r`, pas par `c_i`
+- l'audit local de la référence Blumen et le bootstrap d'incertitude montrent que `c_r` est localement sous-contraint autour de `alpha = 0.2`, `Mach = 1.25-1.30`
 
 ### Pistes déjà explorées
 
@@ -126,3 +128,25 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 - Blumen sert de référence externe
 - le solveur classique ne doit pas dépendre de Blumen pour produire ses solutions
 - Blumen sert à valider la bonne branche, pas à la fabriquer
+
+### Décision scientifique retenue
+
+En régime supersonique, le solveur classique de référence retenu est désormais le `shooting`, et non le GEP. Cette décision repose sur le fait que le shooting retrouve une branche instable auto-cohérente, satisfait correctement les conditions asymptotiques de la formulation, et reproduit de manière robuste la croissance `c_i`, qui est la quantité la plus fiable dans la comparaison à Blumen. En revanche, le `c_r` issu des courbes digitalisées de Blumen autour de `alpha = 0.2` et `Mach = 1.25-1.30` apparaît localement trop peu contraint pour servir de vérité ponctuelle stricte. Le GEP standard n'étant pas capable de retrouver la bonne croissance `c_i`, il n'est pas retenu comme solveur classique de validation supersonique.
+
+| Point | Statut | Lecture |
+| --- | --- | --- |
+| Existence d'une branche instable supersonique | Validé | Le shooting converge de façon stable sur une branche cohérente |
+| Conditions asymptotiques et raccord | Validé | Les audits montrent une bonne cohérence interne du shooting |
+| Reproduction de `c_i` de Blumen | Validé | Accord globalement bon, donc benchmark principal crédible |
+| Reproduction point par point de `c_r` de Blumen | Non validé strictement | La référence digitalisée en `c_r` est localement trop incertaine |
+| GEP comme solveur classique supersonique de référence | Non validé | Il rate la croissance `c_i`, donc il ne peut pas servir de vérité |
+| Usage de `c_r` comme cible quantitative forte | Non retenu | À utiliser seulement qualitativement ou avec barre d'incertitude |
+| Structure modale supersonique | À consolider | À comparer explicitement à la forme attendue du mode |
+
+### Prochaine étape retenue sur le shooting
+
+- prendre `c_i` comme cible principale de calibration sur les courbes Blumen
+- comparer explicitement la structure du mode obtenu par shooting à la forme physique attendue
+- utiliser des critères de continuité modale et d'overlap central pour suivre la branche en `Mach`
+- ne plus forcer un alignement point par point sur `c_r` tant que l'incertitude locale de la référence Blumen domine l'écart
+- garder le GEP comme audit secondaire, pas comme solveur de vérité

@@ -319,7 +319,11 @@ def plot_pdf(
             alpha_cols = [col for col in sub.columns if col.startswith("alpha_on_curve_level_")]
             labels = [float(col.split("_")[-1]) for col in alpha_cols]
             data = [sub[col].to_numpy(dtype=float) for col in alpha_cols]
-            axes[1].boxplot(data, tick_labels=[f"{level:.2f}" for level in labels], showfliers=False)
+            tick_labels = [f"{level:.2f}" for level in labels]
+            try:
+                axes[1].boxplot(data, tick_labels=tick_labels, showfliers=False)
+            except TypeError:
+                axes[1].boxplot(data, labels=tick_labels, showfliers=False)
             axes[1].axhline(float(row["alpha_target"]), color="tab:red", linestyle=":", linewidth=1.6, label=r"$\alpha$ cible")
             axes[1].set_xlabel(r"Niveaux $c_r$")
             axes[1].set_ylabel(r"$\alpha(M, c_r)$ bootstrap")
