@@ -55,6 +55,30 @@ Objectif :
 - un baseline fixe en Mach est disponible à `M = 0.5`
 - la supervision légère de `c_i` est justifiée et calibrée
 - la reconstruction modale reste le verrou principal
+- les expériences récentes montrent qu'il faut désormais distinguer trois régimes en `alpha`
+
+Décision méthodologique sur les régimes en `alpha` :
+
+| Régime | Statut actuel | Choix retenu |
+| --- | --- | --- |
+| `alpha ≈ 0.20-0.80` | Le mode est globalement retrouvable avec la physique/hybride standard | Garder la formulation physique standard comme régime principal |
+| `alpha ≈ 0.05` | Le pur physique n'est pas robuste, mais un guidage classique léger répare nettement la branche | Utiliser un guidage classique léger sur `c_i`, `q` et l'ancrage spatial |
+| `alpha ≈ 0.85` | Le bon `c_i` devient récupérable, mais la bonne famille modale ne l'est pas | Utiliser une supervision classique explicite du mode |
+
+Lecture physique et numérique :
+
+- au centre de la bande, la physique imposée par le PINN suffit à sélectionner la bonne branche
+- à bas `alpha`, la croissance est faible et l'identifiabilité modale devient mauvaise : le réseau peut satisfaire les contraintes physiques tout en dérivant en localisation ou en enveloppe
+- à haut `alpha`, le verrou n'est plus l'eigenvaleur scalaire mais la famille modale : plusieurs modes voisins peuvent porter un `c_i` proche, alors que leur structure spatiale reste fausse
+- le solveur classique de tir, lui, reste stable à ces extrémités parce qu'il traite un couple `(alpha, Mach)` à la fois, impose directement les asymptotiques et ne subit pas le compromis global d'un entraînement sur une bande d'`alpha`
+
+Conséquence pratique :
+
+- le subsonique ne doit plus être présenté comme un problème uniforme sur toute la bande en `alpha`
+- il faut assumer un protocole hybride par régimes :
+  - régime central : physique standard
+  - bas `alpha` : guidage classique léger
+  - haut `alpha` : supervision classique forte du mode
 
 Livrables attendus :
 

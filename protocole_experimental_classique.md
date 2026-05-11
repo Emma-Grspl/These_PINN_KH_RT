@@ -38,6 +38,66 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 - la référence subsonique sur `c_i` est suffisamment solide pour servir de base de comparaison
 - le workflow hybride est la référence classique subsonique actuelle
 
+### Ce que les tests PINN ont clarifié sur la difficulté subsonique
+
+Les derniers tests ne pointent pas vers une difficulté uniforme en `alpha`. Ils montrent au contraire trois régimes distincts :
+
+| Régime | Observation | Lecture |
+| --- | --- | --- |
+| `alpha ≈ 0.20-0.80` | Le mode est globalement retrouvable avec la physique standard | Le verrou principal reste la qualité de reconstruction, pas l'existence de la bonne branche |
+| `alpha ≈ 0.05` | Le pur physique dérive, mais un guidage classique léger répare fortement les métriques modales | Le problème vient surtout d'une mauvaise identifiabilité du mode à faible croissance |
+| `alpha ≈ 0.85` | Le bon `c_i` devient atteignable, mais la bonne famille modale reste perdue | Le problème n'est plus l'eigenvaleur, mais la sélection de branche modale |
+
+Résultats marquants déjà obtenus :
+
+- `low-alpha targeted` à `alpha = 0.05` :
+  - `target_p_rel ≈ 1.90e-01`
+  - `band_p_rel ≈ 1.98e-01`
+  - donc la branche basse n'est pas perdue, mais elle demande un guidage classique léger
+- `high-alpha targeted`, `continuation` et `stepwise` à `alpha = 0.85` :
+  - le bon `c_i` peut devenir presque correct
+  - mais `p_rel` reste de l'ordre de `1.0`
+  - donc le mode reste sur la mauvaise famille
+- `high-alpha mode repair` avec `c_i` gelé :
+  - pas d'amélioration substantielle au point cible
+  - ce test confirme que le verrou haut-alpha n'est pas un simple réglage local de loss
+
+### Pourquoi le pur physique ne suffit pas aux extrémités
+
+- à bas `alpha`, la croissance est faible et la branche devient mal identifiable par les seules pertes physiques
+- plusieurs profils peuvent satisfaire le résidu avec un coût proche tout en restant faux en enveloppe, en localisation ou en phase
+- à haut `alpha`, la difficulté change de nature :
+  - le scalaire `c_i` n'est plus le vrai verrou
+  - plusieurs familles modales voisines peuvent porter un `c_i` proche
+  - les pertes physiques et les diagnostics moyens sur une bande d'`alpha` n'imposent pas assez fortement la bonne structure
+- un entraînement PINN sur bande subit aussi un compromis global :
+  - il peut améliorer la moyenne de bande
+  - tout en sacrifiant le point extrême `alpha = 0.85`
+
+### Pourquoi le classique, et en particulier le shooting, tient mieux la branche
+
+- le solveur classique traite un couple `(alpha, Mach)` à la fois
+- il impose directement les conditions asymptotiques du problème
+- il n'a pas à partager sa capacité entre plusieurs `alpha`
+- il n'optimise pas une loss moyenne : il résout un problème spectral local
+- en pratique, cela suffit à verrouiller proprement les quantités de référence là où le PINN peut encore confondre plusieurs familles modales
+
+### Choix méthodologique retenu pour le PINN subsonique
+
+Le protocole retenu n'est donc pas un schéma unique sur toute la bande en `alpha`. Il est explicitement découpé par régimes :
+
+- `alpha ≈ 0.20-0.80` :
+  - physique standard / hybride standard
+- `alpha ≈ 0.05` :
+  - guidage classique léger sur `c_i`, `q` et l'ancrage spatial
+- `alpha ≈ 0.85` :
+  - supervision classique explicite du mode
+
+En une phrase :
+
+- au bas-alpha, il faut guider l'eigenvaleur et la localisation
+- au haut-alpha, il faut guider la famille modale elle-même
+
 ### Ce qu'il reste à faire
 
 - formaliser proprement la référence de mode subsonique si l'objectif est de publier des comparaisons modales détaillées

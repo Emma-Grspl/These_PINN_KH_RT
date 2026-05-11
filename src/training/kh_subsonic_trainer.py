@@ -120,6 +120,14 @@ class KHSubsonicTrainingConfig:
     classic_n_points: int = 561
     classic_mapping_scale: float = 3.0
     classic_xi_max: float = 0.99
+    classic_mode_supervision: bool = False
+    classic_mode_supervision_alphas: tuple[float, ...] = ()
+    classic_mode_supervision_every: int = 20
+    classic_mode_supervision_n_xi: int = 257
+    classic_mode_supervision_xi_min: float = -0.98
+    classic_mode_supervision_xi_max: float = 0.98
+    classic_mode_supervision_y_max: float = 8.0
+    w_classic_mode_supervision: float = 0.0
     enforce_mode_symmetry: bool = False
     mode_representation: str = "cartesian"
     mode_experts: int = 1
@@ -266,6 +274,22 @@ class PressureModeReferenceCache:
         return self.cache[alpha_key]
 
 
+def reconstruct_predicted_pressure_mode(
+    model: KHSubsonicFixedMachPINN,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if model.mode_representation == "riccati":
+        pr, pi, y_pred_t = reconstruct_pressure_from_riccati(model, xi, alpha, anchor_xi=0.0)
+        return pr, pi, y_pred_t
+
+    pred = model(xi, alpha)
+    pr = pred[:, 0:1]
+    pi = pred[:, 1:2]
+    y_pred_t = xi_to_y(xi, model.get_mapping_scale())
+    return pr, pi, y_pred_t
+
+
 def riccati_anchor_supervision_loss(
     model: KHSubsonicFixedMachPINN,
     alpha_samples: torch.Tensor,
@@ -292,6 +316,75 @@ def riccati_anchor_supervision_loss(
         )
         pred = torch.cat([pr, pi], dim=-1)
         losses.append(torch.mean((pred - target) ** 2))
+
+    if not losses:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+    return torch.stack(losses).mean()
+
+
+def build_classic_mode_supervision_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    alpha_ref: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    if len(cfg.classic_mode_supervision_alphas):
+        return torch.tensor(cfg.classic_mode_supervision_alphas, dtype=alpha_ref.dtype, device=device).view(-1, 1)
+    count = min(1, alpha_ref.shape[0])
+    return alpha_ref[:count]
+
+
+def classic_mode_supervision_loss(
+    model: KHSubsonicFixedMachPINN,
+    alpha_samples: torch.Tensor,
+    reference_cache: PressureModeReferenceCache,
+    *,
+    n_xi: int,
+    xi_min: float,
+    xi_max: float,
+    y_max: float,
+    device: torch.device,
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    xi_template = torch.linspace(float(xi_min), float(xi_max), int(n_xi), device=device).view(-1, 1)
+    anchor_idx = xi_template.shape[0] // 2
+    eps = torch.tensor(1e-8, dtype=xi_template.dtype, device=device)
+
+    for alpha_value in alpha_samples[:, 0].detach().cpu().numpy():
+        alpha_scalar = float(alpha_value)
+        alpha_line = torch.full_like(xi_template, alpha_scalar)
+        pr, pi, y_pred_t = reconstruct_predicted_pressure_mode(model, xi_template, alpha_line)
+
+        p_pred = torch.complex(pr[:, 0], pi[:, 0])
+        p_anchor = p_pred[anchor_idx]
+        p_anchor_abs = torch.abs(p_anchor)
+        safe_anchor = torch.where(
+            p_anchor_abs > eps,
+            p_anchor,
+            torch.complex(torch.ones((), dtype=pr.dtype, device=device), torch.zeros((), dtype=pr.dtype, device=device)),
+        )
+        p_pred = p_pred / safe_anchor
+
+        y_pred = y_pred_t[:, 0].detach().cpu().numpy()
+        y_ref, p_ref = reference_cache.get(alpha_scalar)
+
+        mask = (y_pred >= float(np.min(y_ref))) & (y_pred <= float(np.max(y_ref)))
+        if y_max > 0.0:
+            mask &= np.abs(y_pred) <= float(y_max)
+        if not np.any(mask):
+            continue
+
+        y_local = y_pred[mask]
+        p_ref_interp = np.interp(y_local, y_ref, np.real(p_ref)) + 1j * np.interp(y_local, y_ref, np.imag(p_ref))
+        target = torch.tensor(
+            np.column_stack([np.real(p_ref_interp), np.imag(p_ref_interp)]),
+            dtype=pr.dtype,
+            device=device,
+        )
+        pred = torch.stack([torch.real(p_pred), torch.imag(p_pred)], dim=-1)[torch.tensor(mask, device=device)]
+        numer = torch.mean((pred - target).pow(2))
+        denom = torch.mean(target.pow(2)) + eps
+        losses.append(numer / denom)
 
     if not losses:
         return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
@@ -445,14 +538,9 @@ def compute_mode_diagnostics(
     xi = torch.linspace(-0.98, 0.98, n_y, device=device).view(-1, 1)
     alpha_tensor = torch.full_like(xi, float(alpha))
     with torch.no_grad():
-        if model.mode_representation == "riccati":
-            pr, pi, y_pred_t = reconstruct_pressure_from_riccati(model, xi, alpha_tensor, anchor_xi=0.0)
-            y_pred = y_pred_t.cpu().numpy().reshape(-1)
-            p_pred = (pr[:, 0] + 1j * pi[:, 0]).cpu().numpy().reshape(-1)
-        else:
-            pred = model(xi, alpha_tensor)
-            y_pred = xi_to_y(xi, model.get_mapping_scale().detach()).cpu().numpy().reshape(-1)
-            p_pred = (pred[:, 0] + 1j * pred[:, 1]).cpu().numpy().reshape(-1)
+        pr, pi, y_pred_t = reconstruct_predicted_pressure_mode(model, xi, alpha_tensor)
+        y_pred = y_pred_t.cpu().numpy().reshape(-1)
+        p_pred = (pr[:, 0] + 1j * pi[:, 0]).cpu().numpy().reshape(-1)
     y_pred, p_pred = anchor_pressure_mode(y_pred, p_pred, anchor_y=0.0)
 
     y_min = max(float(np.min(y_ref)), float(np.min(y_pred)))
@@ -571,10 +659,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
 
     use_classic_ci_supervision = bool(cfg.enable_classic_ci_supervision)
     use_classic_mode_audit = bool(cfg.enable_classic_mode_audit)
-    use_classic_mode_supervision = bool(
+    use_classic_aux_mode_supervision = bool(
         (cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0) or cfg.w_q_supervision > 0.0
     )
-    use_classic_references = use_classic_ci_supervision or use_classic_mode_audit or use_classic_mode_supervision
+    use_classic_mode_supervision = bool(cfg.classic_mode_supervision and cfg.w_classic_mode_supervision > 0.0)
+    use_classic_references = (
+        use_classic_ci_supervision
+        or use_classic_mode_audit
+        or use_classic_aux_mode_supervision
+        or use_classic_mode_supervision
+    )
 
     reference_cache = None
     if use_classic_references:
@@ -586,7 +680,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
 
     mode_reference_cache = None
-    if use_classic_mode_audit or use_classic_mode_supervision:
+    if use_classic_mode_audit or use_classic_aux_mode_supervision or use_classic_mode_supervision:
         mode_reference_cache = PressureModeReferenceCache(
             mach=cfg.mach,
             n_points=cfg.classic_n_points,
@@ -800,6 +894,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_riccati_shooting_match = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_first_order_v_energy = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_first_order_amp_cap = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_classic_mode_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_stability_outside = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_neutrality = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_low_alpha_zero = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -948,6 +1043,24 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     alpha_norm,
                     amp_cap=cfg.first_order_amp_cap,
                 )
+                if (
+                    cfg.classic_mode_supervision
+                    and cfg.w_classic_mode_supervision > 0.0
+                    and cfg.classic_mode_supervision_every > 0
+                    and epoch % cfg.classic_mode_supervision_every == 0
+                ):
+                    alpha_mode_sup = build_classic_mode_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
+                    loss_classic_mode_supervision = classic_mode_supervision_loss(
+                        model,
+                        alpha_mode_sup,
+                        mode_reference_cache,
+                        n_xi=cfg.classic_mode_supervision_n_xi,
+                        xi_min=cfg.classic_mode_supervision_xi_min,
+                        xi_max=cfg.classic_mode_supervision_xi_max,
+                        y_max=cfg.classic_mode_supervision_y_max,
+                        device=device,
+                    )
             loss_mode = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -967,6 +1080,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
+                + cfg.w_classic_mode_supervision * loss_classic_mode_supervision
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -1047,6 +1161,24 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     alpha_norm,
                     amp_cap=cfg.first_order_amp_cap,
                 )
+                if (
+                    cfg.classic_mode_supervision
+                    and cfg.w_classic_mode_supervision > 0.0
+                    and cfg.classic_mode_supervision_every > 0
+                    and epoch % cfg.classic_mode_supervision_every == 0
+                ):
+                    alpha_mode_sup = build_classic_mode_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert mode_reference_cache is not None
+                    loss_classic_mode_supervision = classic_mode_supervision_loss(
+                        model,
+                        alpha_mode_sup,
+                        mode_reference_cache,
+                        n_xi=cfg.classic_mode_supervision_n_xi,
+                        xi_min=cfg.classic_mode_supervision_xi_min,
+                        xi_max=cfg.classic_mode_supervision_xi_max,
+                        y_max=cfg.classic_mode_supervision_y_max,
+                        device=device,
+                    )
             loss = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -1066,6 +1198,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
                 + cfg.w_riccati_boundary_band_q * loss_riccati_boundary_band_q
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
+                + cfg.w_classic_mode_supervision * loss_classic_mode_supervision
                 + loss_ci_regularization
                 + stage_w_ci_supervision * loss_ci
             )
@@ -1089,6 +1222,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_loc_spread": float(loss_loc_spread.item()),
             "loss_first_order_v_energy": float(loss_first_order_v_energy.item()),
             "loss_first_order_amp_cap": float(loss_first_order_amp_cap.item()),
+            "loss_classic_mode_supervision": float(loss_classic_mode_supervision.item()),
             "loss_riccati_anchor": float(loss_riccati_anchor.item()),
             "loss_q_supervision": float(loss_q_supervision.item()),
             "loss_riccati_center_kappa": float(loss_riccati_center_kappa.item()),
@@ -1167,6 +1301,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     f"bc_k={record['loss_bc_kappa']:.3e} | "
                     f"bc_q={record['loss_bc_q']:.3e} | "
                     f"ci_sup={record['loss_ci_supervision']:.3e} | "
+                    f"cls_sup={record['loss_classic_mode_supervision']:.3e} | "
                     f"q_sup={record['loss_q_supervision']:.3e} | "
                     f"L={record['mapping_scale']:.3f}"
                 )
