@@ -22,6 +22,8 @@ def supersonic_digitized_x_to_mach(x: float | np.ndarray) -> float | np.ndarray:
 def parse_reference_level(csv_path: str | Path) -> tuple[float | None, str, str]:
     stem = Path(csv_path).stem.strip().replace("_", ".").replace(",", ".")
     lower = stem.lower()
+    if lower.endswith(".datasets"):
+        return None, stem, "dataset"
     if lower.startswith("ci"):
         value = float(lower[2:] or "0") / 100.0
         return value, fr"$c_r = 0,\; c_i = {value:.2f}$", "ci_special"
@@ -55,20 +57,94 @@ def load_supersonic_blumen_csv(csv_path: str | Path, *, calibrate_mach: bool = T
     return df
 
 
-def load_digitized_curves(data_dir: str | Path, *, calibrate_mach: bool = True) -> list[dict]:
+def is_wide_digitized_dataset(csv_path: str | Path) -> bool:
+    lower = Path(csv_path).stem.strip().replace("_", ".").replace(",", ".").lower()
+    return lower.endswith(".datasets")
+
+
+def parse_wide_dataset_curve(label: str) -> tuple[float | None, str, str]:
+    normalized = str(label).strip().replace(",", ".")
+    lower = normalized.lower()
+    if not normalized or lower == "nan":
+        return None, normalized, "unknown"
+    if lower == "ci=0":
+        return 0.0, r"$c_i = 0$", "ci_special"
+    if lower == "ci_sup=0":
+        return 0.0, r"$c_i^{sup} = 0$", "ci_special"
+    if lower == "cr=0":
+        return 0.0, r"$c_r = 0$", "cr_special"
+    try:
+        value = float(normalized)
+    except ValueError:
+        return None, normalized, "unknown"
+    return value, fr"$c_i = {value:.2f}$", "ci_level"
+
+
+def load_wide_digitized_curves(csv_path: str | Path) -> list[dict]:
+    raw = pd.read_csv(csv_path, header=None)
+    levels = raw.iloc[0].tolist()
+    coords = raw.iloc[1].tolist()
+    data = raw.iloc[2:].reset_index(drop=True)
     curves: list[dict] = []
-    for csv_file in sorted(Path(data_dir).glob("*.csv")):
-        level, label, family = parse_reference_level(csv_file)
+
+    for index in range(0, len(levels) - 1, 2):
+        raw_label = str(levels[index]).strip()
+        x_coord = str(coords[index]).strip().upper()
+        y_coord = str(coords[index + 1]).strip().upper()
+        if not raw_label or raw_label.lower() == "nan" or x_coord != "X" or y_coord != "Y":
+            continue
+
+        x = pd.to_numeric(data.iloc[:, index], errors="coerce")
+        y = pd.to_numeric(data.iloc[:, index + 1], errors="coerce")
+        mask = x.notna() & y.notna()
+        if not mask.any():
+            continue
+
+        level, label, family = parse_wide_dataset_curve(raw_label)
+        df = pd.DataFrame(
+            {
+                "Mach": x[mask].to_numpy(dtype=float),
+                "alpha": y[mask].to_numpy(dtype=float),
+            }
+        ).reset_index(drop=True)
         curves.append(
             {
-                "csv_path": str(csv_file),
-                "stem": csv_file.stem,
+                "csv_path": str(csv_path),
+                "stem": raw_label,
                 "level": None if level is None else float(level),
                 "label": label,
                 "family": family,
-                "data": load_supersonic_blumen_csv(csv_file, calibrate_mach=calibrate_mach),
+                "data": df,
             }
         )
+
+    return curves
+
+
+def load_digitized_curves(data_dir: str | Path, *, calibrate_mach: bool = True) -> list[dict]:
+    curves: list[dict] = []
+    csv_files = sorted(Path(data_dir).glob("*.csv"))
+    single_curve_files = [csv_file for csv_file in csv_files if not is_wide_digitized_dataset(csv_file)]
+    dataset_files = [csv_file for csv_file in csv_files if is_wide_digitized_dataset(csv_file)]
+
+    if single_curve_files:
+        for csv_file in single_curve_files:
+            level, label, family = parse_reference_level(csv_file)
+            curves.append(
+                {
+                    "csv_path": str(csv_file),
+                    "stem": csv_file.stem,
+                    "level": None if level is None else float(level),
+                    "label": label,
+                    "family": family,
+                    "data": load_supersonic_blumen_csv(csv_file, calibrate_mach=calibrate_mach),
+                }
+            )
+        return curves
+
+    for csv_file in dataset_files:
+        curves.extend(load_wide_digitized_curves(csv_file))
+
     return curves
 
 

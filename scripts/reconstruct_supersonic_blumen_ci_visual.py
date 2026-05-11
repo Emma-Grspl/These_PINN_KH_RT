@@ -42,12 +42,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def load_ci_curves() -> list[dict]:
     curves = load_digitized_curves(DATA_DIR)
-    return [curve for curve in curves if curve["family"] in {"ci_level", "ci_special"} and curve["level"] is not None]
+    return [curve for curve in curves if curve["family"] in {"ci_level", "ci_special", "cr_special"} and curve["level"] is not None]
 
 
 def build_anchor_points(curves: list[dict]) -> list[dict]:
     anchors: list[dict] = []
     for curve in curves:
+        if curve["family"] != "ci_level":
+            continue
         level = float(curve["level"])
         for _, row in curve["data"].iterrows():
             mach = float(row["Mach"])
@@ -66,12 +68,14 @@ def build_anchor_points(curves: list[dict]) -> list[dict]:
 
 
 def contour_levels(curves: list[dict]) -> list[float]:
-    return sorted({float(curve["level"]) for curve in curves})
+    return sorted({float(curve["level"]) for curve in curves if curve["family"] == "ci_level"})
 
 
 def style_for_curve(curve: dict) -> dict:
     if curve["family"] == "ci_special":
         return {"color": "black", "linewidth": 1.0, "linestyle": (0, (5, 3)), "alpha": 0.9}
+    if curve["family"] == "cr_special":
+        return {"color": "black", "linewidth": 1.0, "linestyle": (0, (2, 2)), "alpha": 0.9}
     return {"color": "black", "linewidth": 1.4, "linestyle": "-", "alpha": 0.95}
 
 
@@ -110,18 +114,20 @@ def plot_blumen_reference(curves: list[dict], output_path: Path) -> None:
         x, y = label_position(curve["data"], mach_target)
         ax.text(x + 0.02, y - 0.01, label, fontsize=9)
 
-    for level, label, mach_target, alpha_shift in [
-        (0.01, r"$c_r = 0,\; c_i = 0.01$", 1.02, 0.018),
-        (0.02, r"$c_r = 0,\; c_i = 0.02$", 1.08, 0.010),
-    ]:
-        curve = next(
-            (item for item in curves if item["family"] == "ci_special" and abs(float(item["level"]) - level) < 1e-12),
-            None,
-        )
+    special_targets = [
+        ("ci_special", r"$c_i = 0$", 0.98, 0.015),
+        ("cr_special", r"$c_r = 0$", 1.22, 0.010),
+    ]
+    for family, label, mach_target, alpha_shift in special_targets:
+        curve = next((item for item in curves if item["family"] == family and item["stem"] != "ci_sup=0"), None)
         if curve is None:
             continue
         x, y = label_position(curve["data"], mach_target)
         ax.text(x - 0.01, y + alpha_shift, label, fontsize=8.5)
+    curve = next((item for item in curves if item["stem"] == "ci_sup=0"), None)
+    if curve is not None:
+        x, y = label_position(curve["data"], 1.06)
+        ax.text(x - 0.01, y + 0.012, r"$c_i^{sup} = 0$", fontsize=8.5)
 
     ax.set_xlim(0.95, 2.05)
     ax.set_ylim(0.0, 0.50)
@@ -172,7 +178,8 @@ def plot_shooting_overlay(df: pd.DataFrame, curves: list[dict], output_path: Pat
 
     legend_lines = [
         plt.Line2D([], [], color="black", linewidth=1.4, label=r"Blumen $c_i$ (principal)"),
-        plt.Line2D([], [], color="black", linewidth=1.0, linestyle=(0, (5, 3)), label=r"Blumen $c_r=0$"),
+        plt.Line2D([], [], color="black", linewidth=1.0, linestyle=(0, (5, 3)), label=r"Blumen $c_i=0$"),
+        plt.Line2D([], [], color="black", linewidth=1.0, linestyle=(0, (2, 2)), label=r"Blumen $c_r=0$"),
         plt.Line2D([], [], color=plt.get_cmap("viridis")(0.7), linewidth=2.0, label=r"Shooting $c_i$"),
     ]
     ax.legend(handles=legend_lines, loc="upper right", frameon=True)
