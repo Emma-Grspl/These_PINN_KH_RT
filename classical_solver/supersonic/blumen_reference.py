@@ -62,7 +62,7 @@ def is_wide_digitized_dataset(csv_path: str | Path) -> bool:
     return lower.endswith(".datasets")
 
 
-def parse_wide_dataset_curve(label: str) -> tuple[float | None, str, str]:
+def parse_wide_dataset_curve(label: str, *, source_kind: str) -> tuple[float | None, str, str]:
     normalized = str(label).strip().replace(",", ".")
     lower = normalized.lower()
     if not normalized or lower == "nan":
@@ -77,7 +77,11 @@ def parse_wide_dataset_curve(label: str) -> tuple[float | None, str, str]:
         value = float(normalized)
     except ValueError:
         return None, normalized, "unknown"
-    return value, fr"$c_i = {value:.2f}$", "ci_level"
+    if source_kind == "ci":
+        return value, fr"$c_i = {value:.2f}$", "ci_level"
+    if source_kind == "cr":
+        return value, fr"$c_r = {value:.2f}$", "cr_level"
+    return None, normalized, "unknown"
 
 
 def load_wide_digitized_curves(csv_path: str | Path) -> list[dict]:
@@ -86,6 +90,13 @@ def load_wide_digitized_curves(csv_path: str | Path) -> list[dict]:
     coords = raw.iloc[1].tolist()
     data = raw.iloc[2:].reset_index(drop=True)
     curves: list[dict] = []
+    stem = Path(csv_path).stem.lower()
+    if stem.startswith("ci"):
+        source_kind = "ci"
+    elif stem.startswith("cr"):
+        source_kind = "cr"
+    else:
+        source_kind = "unknown"
 
     for index in range(0, len(levels) - 1, 2):
         raw_label = str(levels[index]).strip()
@@ -100,7 +111,7 @@ def load_wide_digitized_curves(csv_path: str | Path) -> list[dict]:
         if not mask.any():
             continue
 
-        level, label, family = parse_wide_dataset_curve(raw_label)
+        level, label, family = parse_wide_dataset_curve(raw_label, source_kind=source_kind)
         df = pd.DataFrame(
             {
                 "Mach": x[mask].to_numpy(dtype=float),
