@@ -2,7 +2,8 @@
 #SBATCH --job-name=KH_PINN_M05_highalpha_bal_full
 #SBATCH --output=slurm/log/%x_%j.out
 #SBATCH --error=slurm/log/%x_%j.err
-#SBATCH -A fdb@gpu
+#SBATCH -A fdb@v100
+#SBATCH --constraint=v100-32g
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --gres=gpu:1
