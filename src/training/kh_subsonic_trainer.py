@@ -139,6 +139,21 @@ class KHSubsonicTrainingConfig:
     classic_full_mode_supervision_xi_max: float = 0.98
     classic_full_mode_supervision_y_max: float = 8.0
     w_classic_full_mode_supervision: float = 0.0
+    classic_balanced_full_mode_supervision: bool = False
+    classic_balanced_full_mode_supervision_alphas: tuple[float, ...] = ()
+    classic_balanced_full_mode_supervision_every: int = 20
+    classic_balanced_full_mode_supervision_n_xi: int = 257
+    classic_balanced_full_mode_supervision_xi_min: float = -0.98
+    classic_balanced_full_mode_supervision_xi_max: float = 0.98
+    classic_balanced_full_mode_supervision_y_max: float = 8.0
+    classic_balanced_full_mode_supervision_center_y_max: float = 4.0
+    classic_balanced_full_mode_l2_weight: float = 1.0
+    classic_balanced_full_mode_overlap_weight: float = 2.0
+    classic_balanced_full_mode_rho_weight: float = 1.0
+    classic_balanced_full_mode_u_weight: float = 0.15
+    classic_balanced_full_mode_v_weight: float = 1.0
+    classic_balanced_full_mode_p_weight: float = 1.0
+    w_classic_balanced_full_mode_supervision: float = 0.0
     enforce_mode_symmetry: bool = False
     mode_representation: str = "cartesian"
     mode_experts: int = 1
@@ -544,6 +559,18 @@ def build_classic_full_mode_supervision_alphas(
     return alpha_ref[:count]
 
 
+def build_classic_balanced_full_mode_supervision_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    alpha_ref: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    if len(cfg.classic_balanced_full_mode_supervision_alphas):
+        return torch.tensor(cfg.classic_balanced_full_mode_supervision_alphas, dtype=alpha_ref.dtype, device=device).view(-1, 1)
+    count = min(1, alpha_ref.shape[0])
+    return alpha_ref[:count]
+
+
 def classic_full_mode_supervision_loss(
     model: KHSubsonicFixedMachPINN,
     alpha_samples: torch.Tensor,
@@ -592,6 +619,104 @@ def classic_full_mode_supervision_loss(
             denom = torch.mean(target.pow(2)) + eps
             field_losses.append(numer / denom)
         losses.append(torch.stack(field_losses).mean())
+
+    if not losses:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+    return torch.stack(losses).mean()
+
+
+def _complex_rms_torch(field: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+    return torch.sqrt(torch.mean(torch.abs(field).pow(2)) + eps)
+
+
+def _complex_relative_l2_loss(pred: torch.Tensor, target: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+    pred_norm = pred / _complex_rms_torch(pred, eps)
+    target_norm = target / _complex_rms_torch(target, eps)
+    return torch.mean(torch.abs(pred_norm - target_norm).pow(2))
+
+
+def _complex_overlap_loss(pred: torch.Tensor, target: torch.Tensor, eps: torch.Tensor) -> torch.Tensor:
+    pred_centered = pred - torch.mean(pred)
+    target_centered = target - torch.mean(target)
+    numer = torch.abs(torch.sum(torch.conj(target_centered) * pred_centered))
+    denom = torch.sqrt(
+        torch.sum(torch.abs(pred_centered).pow(2)) * torch.sum(torch.abs(target_centered).pow(2)) + eps
+    )
+    overlap = numer / denom
+    return 1.0 - overlap
+
+
+def classic_balanced_full_mode_supervision_loss(
+    model: KHSubsonicFixedMachPINN,
+    alpha_samples: torch.Tensor,
+    reference_cache: FullModeReferenceCache,
+    *,
+    mach: float,
+    n_xi: int,
+    xi_min: float,
+    xi_max: float,
+    y_max: float,
+    center_y_max: float,
+    l2_weight: float,
+    overlap_weight: float,
+    rho_weight: float,
+    u_weight: float,
+    v_weight: float,
+    p_weight: float,
+    device: torch.device,
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    xi_template = torch.linspace(float(xi_min), float(xi_max), int(n_xi), device=device).view(-1, 1)
+    eps = torch.tensor(1e-8, dtype=xi_template.dtype, device=device)
+    field_weights = {
+        "rho": float(rho_weight),
+        "u": float(u_weight),
+        "v": float(v_weight),
+        "p": float(p_weight),
+    }
+    active_weight_sum = sum(weight for weight in field_weights.values() if weight > 0.0)
+    if active_weight_sum <= 0.0:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+
+    for alpha_value in alpha_samples[:, 0].detach().cpu().numpy():
+        alpha_scalar = float(alpha_value)
+        xi_local = xi_template.clone().detach().requires_grad_(True)
+        alpha_line = torch.full_like(xi_local, alpha_scalar)
+        fields_pred = reconstruct_predicted_full_mode(model, xi_local, alpha_line, mach=mach)
+        y_pred = fields_pred["y"][:, 0].detach().cpu().numpy()
+        fields_ref = reference_cache.get(alpha_scalar)
+
+        mask = (y_pred >= float(np.min(fields_ref["y"]))) & (y_pred <= float(np.max(fields_ref["y"])))
+        if y_max > 0.0:
+            mask &= np.abs(y_pred) <= float(y_max)
+        if not np.any(mask):
+            continue
+
+        y_local = y_pred[mask]
+        center_mask_np = np.abs(y_local) <= float(center_y_max)
+        if int(np.sum(center_mask_np)) < 8:
+            center_mask_np = np.ones_like(y_local, dtype=bool)
+
+        mask_t = torch.tensor(mask, device=device, dtype=torch.bool)
+        center_mask_t = torch.tensor(center_mask_np, device=device, dtype=torch.bool)
+        field_losses: list[torch.Tensor] = []
+
+        for field_name, field_weight in field_weights.items():
+            if field_weight <= 0.0:
+                continue
+
+            ref_interp = np.interp(y_local, fields_ref["y"], np.real(fields_ref[field_name])) + 1j * np.interp(
+                y_local, fields_ref["y"], np.imag(fields_ref[field_name])
+            )
+            target_field = torch.tensor(ref_interp, dtype=torch.complex64, device=device)
+            pred_field = fields_pred[field_name][:, 0][mask_t]
+
+            loss_l2 = _complex_relative_l2_loss(pred_field, target_field, eps)
+            loss_overlap = _complex_overlap_loss(pred_field[center_mask_t], target_field[center_mask_t], eps)
+            field_losses.append(field_weight * (float(l2_weight) * loss_l2 + float(overlap_weight) * loss_overlap))
+
+        if field_losses:
+            losses.append(torch.stack(field_losses).sum() / float(active_weight_sum))
 
     if not losses:
         return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
@@ -873,12 +998,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     use_classic_full_mode_supervision = bool(
         cfg.classic_full_mode_supervision and cfg.w_classic_full_mode_supervision > 0.0
     )
+    use_classic_balanced_full_mode_supervision = bool(
+        cfg.classic_balanced_full_mode_supervision and cfg.w_classic_balanced_full_mode_supervision > 0.0
+    )
     use_classic_references = (
         use_classic_ci_supervision
         or use_classic_mode_audit
         or use_classic_aux_mode_supervision
         or use_classic_mode_supervision
         or use_classic_full_mode_supervision
+        or use_classic_balanced_full_mode_supervision
     )
 
     reference_cache = None
@@ -900,7 +1029,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
 
     full_mode_reference_cache = None
-    if use_classic_full_mode_supervision:
+    if use_classic_full_mode_supervision or use_classic_balanced_full_mode_supervision:
         full_mode_reference_cache = FullModeReferenceCache(
             mach=cfg.mach,
             n_points=cfg.classic_n_points,
@@ -1116,6 +1245,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_first_order_amp_cap = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_classic_mode_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_classic_full_mode_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_classic_balanced_full_mode_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_stability_outside = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_neutrality = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_low_alpha_zero = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -1301,6 +1431,32 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         y_max=cfg.classic_full_mode_supervision_y_max,
                         device=device,
                     )
+                if (
+                    cfg.classic_balanced_full_mode_supervision
+                    and cfg.w_classic_balanced_full_mode_supervision > 0.0
+                    and cfg.classic_balanced_full_mode_supervision_every > 0
+                    and epoch % cfg.classic_balanced_full_mode_supervision_every == 0
+                ):
+                    alpha_balanced_full_mode_sup = build_classic_balanced_full_mode_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert full_mode_reference_cache is not None
+                    loss_classic_balanced_full_mode_supervision = classic_balanced_full_mode_supervision_loss(
+                        model,
+                        alpha_balanced_full_mode_sup,
+                        full_mode_reference_cache,
+                        mach=cfg.mach,
+                        n_xi=cfg.classic_balanced_full_mode_supervision_n_xi,
+                        xi_min=cfg.classic_balanced_full_mode_supervision_xi_min,
+                        xi_max=cfg.classic_balanced_full_mode_supervision_xi_max,
+                        y_max=cfg.classic_balanced_full_mode_supervision_y_max,
+                        center_y_max=cfg.classic_balanced_full_mode_supervision_center_y_max,
+                        l2_weight=cfg.classic_balanced_full_mode_l2_weight,
+                        overlap_weight=cfg.classic_balanced_full_mode_overlap_weight,
+                        rho_weight=cfg.classic_balanced_full_mode_rho_weight,
+                        u_weight=cfg.classic_balanced_full_mode_u_weight,
+                        v_weight=cfg.classic_balanced_full_mode_v_weight,
+                        p_weight=cfg.classic_balanced_full_mode_p_weight,
+                        device=device,
+                    )
             loss_mode = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -1322,6 +1478,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
                 + cfg.w_classic_mode_supervision * loss_classic_mode_supervision
                 + cfg.w_classic_full_mode_supervision * loss_classic_full_mode_supervision
+                + cfg.w_classic_balanced_full_mode_supervision * loss_classic_balanced_full_mode_supervision
             )
             loss_mode.backward()
             mode_optimizer.step()
@@ -1439,6 +1596,32 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         y_max=cfg.classic_full_mode_supervision_y_max,
                         device=device,
                     )
+                if (
+                    cfg.classic_balanced_full_mode_supervision
+                    and cfg.w_classic_balanced_full_mode_supervision > 0.0
+                    and cfg.classic_balanced_full_mode_supervision_every > 0
+                    and epoch % cfg.classic_balanced_full_mode_supervision_every == 0
+                ):
+                    alpha_balanced_full_mode_sup = build_classic_balanced_full_mode_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert full_mode_reference_cache is not None
+                    loss_classic_balanced_full_mode_supervision = classic_balanced_full_mode_supervision_loss(
+                        model,
+                        alpha_balanced_full_mode_sup,
+                        full_mode_reference_cache,
+                        mach=cfg.mach,
+                        n_xi=cfg.classic_balanced_full_mode_supervision_n_xi,
+                        xi_min=cfg.classic_balanced_full_mode_supervision_xi_min,
+                        xi_max=cfg.classic_balanced_full_mode_supervision_xi_max,
+                        y_max=cfg.classic_balanced_full_mode_supervision_y_max,
+                        center_y_max=cfg.classic_balanced_full_mode_supervision_center_y_max,
+                        l2_weight=cfg.classic_balanced_full_mode_l2_weight,
+                        overlap_weight=cfg.classic_balanced_full_mode_overlap_weight,
+                        rho_weight=cfg.classic_balanced_full_mode_rho_weight,
+                        u_weight=cfg.classic_balanced_full_mode_u_weight,
+                        v_weight=cfg.classic_balanced_full_mode_v_weight,
+                        p_weight=cfg.classic_balanced_full_mode_p_weight,
+                        device=device,
+                    )
             loss = (
                 cfg.w_pde * loss_pde
                 + (loss_bc if model.mode_representation == "riccati" else cfg.w_bc * loss_bc)
@@ -1460,6 +1643,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_riccati_shooting_match * loss_riccati_shooting_match
                 + cfg.w_classic_mode_supervision * loss_classic_mode_supervision
                 + cfg.w_classic_full_mode_supervision * loss_classic_full_mode_supervision
+                + cfg.w_classic_balanced_full_mode_supervision * loss_classic_balanced_full_mode_supervision
                 + loss_ci_regularization
                 + stage_w_ci_supervision * loss_ci
             )
@@ -1485,6 +1669,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_first_order_amp_cap": float(loss_first_order_amp_cap.item()),
             "loss_classic_mode_supervision": float(loss_classic_mode_supervision.item()),
             "loss_classic_full_mode_supervision": float(loss_classic_full_mode_supervision.item()),
+            "loss_classic_balanced_full_mode_supervision": float(loss_classic_balanced_full_mode_supervision.item()),
             "loss_riccati_anchor": float(loss_riccati_anchor.item()),
             "loss_q_supervision": float(loss_q_supervision.item()),
             "loss_riccati_center_kappa": float(loss_riccati_center_kappa.item()),
@@ -1565,6 +1750,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                     f"ci_sup={record['loss_ci_supervision']:.3e} | "
                     f"cls_sup={record['loss_classic_mode_supervision']:.3e} | "
                     f"cls_full={record['loss_classic_full_mode_supervision']:.3e} | "
+                    f"cls_bal={record['loss_classic_balanced_full_mode_supervision']:.3e} | "
                     f"q_sup={record['loss_q_supervision']:.3e} | "
                     f"L={record['mapping_scale']:.3f}"
                 )
