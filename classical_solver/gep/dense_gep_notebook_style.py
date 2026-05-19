@@ -57,6 +57,21 @@ def cubic_dzeta_dy(xi: np.ndarray, scale: float, delta: float) -> np.ndarray:
     return 1.0 / (delta + 3.0 * (scale - delta) * xi**2)
 
 
+def finite_box_mapping(xi: np.ndarray, scale: float, y_min: float, y_max: float) -> np.ndarray:
+    if not np.isfinite(y_min) or not np.isfinite(y_max) or y_max <= y_min:
+        raise ValueError(f"Invalid finite box bounds: y_min={y_min}, y_max={y_max}.")
+    b_mean = 0.5 * (y_min + y_max)
+    b0 = (2.0 * scale / (y_max - y_min)) ** 2
+    return b_mean + scale * xi / np.sqrt(b0 + 1.0 - xi**2)
+
+
+def finite_box_dzeta_dy(xi: np.ndarray, scale: float, y_min: float, y_max: float) -> np.ndarray:
+    if not np.isfinite(y_min) or not np.isfinite(y_max) or y_max <= y_min:
+        raise ValueError(f"Invalid finite box bounds: y_min={y_min}, y_max={y_max}.")
+    b0 = (2.0 * scale / (y_max - y_min)) ** 2
+    return (b0 + 1.0 - xi**2) ** 1.5 / (scale * (b0 + 1.0))
+
+
 @dataclass
 class NotebookStyleGEPResult:
     alpha: float
@@ -81,6 +96,8 @@ class NotebookStyleDenseGEPSolver:
         mapping_scale: float = 5.0,
         cubic_delta: float = 0.2,
         xi_max: float = 0.98,
+        box_y_min: float | None = None,
+        box_y_max: float | None = None,
         rho_bar: float = 1.0,
     ):
         self.alpha = float(alpha)
@@ -90,6 +107,8 @@ class NotebookStyleDenseGEPSolver:
         self.mapping_scale = float(mapping_scale)
         self.cubic_delta = float(cubic_delta)
         self.xi_max = float(xi_max)
+        self.box_y_min = None if box_y_min is None else float(box_y_min)
+        self.box_y_max = None if box_y_max is None else float(box_y_max)
         self.rho_bar = float(rho_bar)
 
         self.a_squared = (1.0 / self.Mach) ** 2
@@ -102,8 +121,15 @@ class NotebookStyleDenseGEPSolver:
         elif self.mapping_kind == "cubic":
             self.y = cubic_mapping(self.xi, self.mapping_scale, self.cubic_delta)
             metric = cubic_dzeta_dy(self.xi, self.mapping_scale, self.cubic_delta)
+        elif self.mapping_kind == "finite_box":
+            if self.box_y_min is None or self.box_y_max is None:
+                raise ValueError("mapping_kind='finite_box' requires box_y_min and box_y_max.")
+            self.y = finite_box_mapping(self.xi, self.mapping_scale, self.box_y_min, self.box_y_max)
+            metric = finite_box_dzeta_dy(self.xi, self.mapping_scale, self.box_y_min, self.box_y_max)
         else:
-            raise ValueError(f"Unknown mapping_kind={self.mapping_kind!r}. Expected 'pin' or 'cubic'.")
+            raise ValueError(
+                f"Unknown mapping_kind={self.mapping_kind!r}. Expected 'pin', 'cubic' or 'finite_box'."
+            )
 
         d_zeta = finite_diff_matrix(self.n_points, self.dxi)
         self.d_y = metric[:, None] * d_zeta
