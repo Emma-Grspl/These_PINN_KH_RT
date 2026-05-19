@@ -55,8 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--positive-cr-only", action="store_true")
     parser.add_argument("--decay-box-factor", type=float, default=4.0)
     parser.add_argument("--oscillation-box-factor", type=float, default=4.0)
+    parser.add_argument("--max-wavelength-to-decay-ratio-for-q-box", type=float, default=8.0)
     parser.add_argument("--min-half-box", type=float, default=8.0)
     parser.add_argument("--max-half-box", type=float, default=120.0)
+    parser.add_argument("--force-symmetric-half-box", action="store_true")
     parser.add_argument("--q-floor", type=float, default=1e-4)
     parser.add_argument("--core-half-width", type=float, default=1.0)
     parser.add_argument("--min-points-core", type=int, default=120)
@@ -99,8 +101,10 @@ def build_box_from_asymptotics(
     ci: float,
     decay_box_factor: float,
     oscillation_box_factor: float,
+    max_wavelength_to_decay_ratio_for_q_box: float,
     min_half_box: float,
     max_half_box: float,
+    force_symmetric_half_box: bool,
     q_floor: float,
 ) -> dict[str, float]:
     solver = Mstab17SupersonicSolver(alpha=float(alpha), Mach=float(mach))
@@ -121,13 +125,26 @@ def build_box_from_asymptotics(
     left_wavelength = np.inf if q_left_abs < q_floor else (2.0 * np.pi / q_left_abs)
     right_wavelength = np.inf if q_right_abs < q_floor else (2.0 * np.pi / q_right_abs)
 
-    left_osc_extent = 0.0 if not np.isfinite(left_wavelength) else float(oscillation_box_factor) * left_wavelength
-    right_osc_extent = 0.0 if not np.isfinite(right_wavelength) else float(oscillation_box_factor) * right_wavelength
+    left_q_box_enabled = bool(
+        np.isfinite(left_wavelength)
+        and left_wavelength <= float(max_wavelength_to_decay_ratio_for_q_box) * left_decay_length
+    )
+    right_q_box_enabled = bool(
+        np.isfinite(right_wavelength)
+        and right_wavelength <= float(max_wavelength_to_decay_ratio_for_q_box) * right_decay_length
+    )
+
+    left_osc_extent = 0.0 if not left_q_box_enabled else float(oscillation_box_factor) * left_wavelength
+    right_osc_extent = 0.0 if not right_q_box_enabled else float(oscillation_box_factor) * right_wavelength
 
     left_uncapped = max(float(min_half_box), left_decay_extent, left_osc_extent)
     right_uncapped = max(float(min_half_box), right_decay_extent, right_osc_extent)
     left_half_box = min(left_uncapped, float(max_half_box))
     right_half_box = min(right_uncapped, float(max_half_box))
+    symmetric_half_box = max(left_half_box, right_half_box)
+    if force_symmetric_half_box:
+        left_half_box = symmetric_half_box
+        right_half_box = symmetric_half_box
 
     def dominant_source(decay_extent: float, osc_extent: float, min_half: float) -> str:
         dominant = max(min_half, decay_extent, osc_extent)
@@ -152,6 +169,10 @@ def build_box_from_asymptotics(
         "right_wavelength": float(right_wavelength) if np.isfinite(right_wavelength) else np.nan,
         "left_box_driver": dominant_source(left_decay_extent, left_osc_extent, float(min_half_box)),
         "right_box_driver": dominant_source(right_decay_extent, right_osc_extent, float(min_half_box)),
+        "left_q_box_enabled": bool(left_q_box_enabled),
+        "right_q_box_enabled": bool(right_q_box_enabled),
+        "force_symmetric_half_box": bool(force_symmetric_half_box),
+        "symmetric_half_box": float(symmetric_half_box),
         "left_box_capped": bool(left_half_box < left_uncapped),
         "right_box_capped": bool(right_half_box < right_uncapped),
         "left_half_box": float(left_half_box),
@@ -355,8 +376,10 @@ def main() -> None:
         ci=target_ci,
         decay_box_factor=float(args.decay_box_factor),
         oscillation_box_factor=float(args.oscillation_box_factor),
+        max_wavelength_to_decay_ratio_for_q_box=float(args.max_wavelength_to_decay_ratio_for_q_box),
         min_half_box=float(args.min_half_box),
         max_half_box=float(args.max_half_box),
+        force_symmetric_half_box=bool(args.force_symmetric_half_box),
         q_floor=float(args.q_floor),
     )
 

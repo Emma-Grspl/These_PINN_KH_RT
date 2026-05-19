@@ -40,8 +40,10 @@ export TOP_K="${TOP_K:-5}"
 export POSITIVE_CR_ONLY="${POSITIVE_CR_ONLY:-1}"
 export DECAY_BOX_FACTOR="${DECAY_BOX_FACTOR:-4.0}"
 export OSCILLATION_BOX_FACTOR="${OSCILLATION_BOX_FACTOR:-4.0}"
+export MAX_WAVELENGTH_TO_DECAY_RATIO_FOR_Q_BOX="${MAX_WAVELENGTH_TO_DECAY_RATIO_FOR_Q_BOX:-8.0}"
 export MIN_HALF_BOX="${MIN_HALF_BOX:-8.0}"
 export MAX_HALF_BOX="${MAX_HALF_BOX:-120.0}"
+export FORCE_SYMMETRIC_HALF_BOX="${FORCE_SYMMETRIC_HALF_BOX:-0}"
 export Q_FLOOR="${Q_FLOOR:-1e-4}"
 export CORE_HALF_WIDTH="${CORE_HALF_WIDTH:-1.0}"
 export MIN_POINTS_CORE="${MIN_POINTS_CORE:-120}"
@@ -53,6 +55,8 @@ export SHOOTING_CR_MAX="${SHOOTING_CR_MAX:-0.70}"
 export SHOOTING_CI_MAX="${SHOOTING_CI_MAX:-0.12}"
 export SHOOTING_MAX_ITER="${SHOOTING_MAX_ITER:-12}"
 export SHOOTING_GRID_SIZE="${SHOOTING_GRID_SIZE:-4}"
+export TARGET_CR="${TARGET_CR:-}"
+export TARGET_CI="${TARGET_CI:-}"
 export U_ZOOM_HALF_WIDTH="${U_ZOOM_HALF_WIDTH:-2.0}"
 export OUTPUT_STEM="${OUTPUT_STEM:-supersonic_gep_asymptotic_box}"
 
@@ -61,6 +65,9 @@ echo "alpha=${ALPHA} Mach=${MACH}"
 echo "N_POINTS=${N_POINTS} AUTO_N_POINTS=${AUTO_N_POINTS} MAX_N_POINTS=${MAX_N_POINTS}"
 echo "mapping L=${MAPPING_L} xi_max=${XI_MAX}"
 echo "box factors: decay=${DECAY_BOX_FACTOR} oscillation=${OSCILLATION_BOX_FACTOR}"
+echo "q-box ratio cutoff=${MAX_WAVELENGTH_TO_DECAY_RATIO_FOR_Q_BOX}"
+echo "force symmetric half box=${FORCE_SYMMETRIC_HALF_BOX}"
+echo "target override: cr=${TARGET_CR:-auto} ci=${TARGET_CI:-auto}"
 echo "resolution targets: core<=${CORE_HALF_WIDTH} -> ${MIN_POINTS_CORE} pts | center<=${CENTER_HALF_WIDTH} -> ${MIN_POINTS_CENTER} pts | tail ppw=${TAIL_POINTS_PER_WAVELENGTH}"
 echo "output stem=${OUTPUT_STEM}"
 date
@@ -75,6 +82,7 @@ ARGS=(
   --top-k "${TOP_K}"
   --decay-box-factor "${DECAY_BOX_FACTOR}"
   --oscillation-box-factor "${OSCILLATION_BOX_FACTOR}"
+  --max-wavelength-to-decay-ratio-for-q-box "${MAX_WAVELENGTH_TO_DECAY_RATIO_FOR_Q_BOX}"
   --min-half-box "${MIN_HALF_BOX}"
   --max-half-box "${MAX_HALF_BOX}"
   --q-floor "${Q_FLOOR}"
@@ -92,12 +100,20 @@ ARGS=(
   --output-stem "${OUTPUT_STEM}"
 )
 
+if [ -n "${TARGET_CR}" ] && [ -n "${TARGET_CI}" ]; then
+  ARGS+=(--target-cr "${TARGET_CR}" --target-ci "${TARGET_CI}")
+fi
+
 if [ "${AUTO_N_POINTS}" = "1" ]; then
   ARGS+=(--auto-n-points)
 fi
 
 if [ "${POSITIVE_CR_ONLY}" = "1" ]; then
   ARGS+=(--positive-cr-only)
+fi
+
+if [ "${FORCE_SYMMETRIC_HALF_BOX}" = "1" ]; then
+  ARGS+=(--force-symmetric-half-box)
 fi
 
 srun python3 classical_solver/gep/audit_supersonic_gep_asymptotic_box.py "${ARGS[@]}"
