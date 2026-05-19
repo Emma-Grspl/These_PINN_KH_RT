@@ -96,6 +96,17 @@ def parse_mode_points(values: list[str]) -> list[tuple[float, float]]:
     return points
 
 
+def generic_seed_list() -> list[tuple[str, float, float]]:
+    return [
+        ("generic_00", 0.00, 0.015),
+        ("generic_01", 0.05, 0.025),
+        ("generic_02", 0.10, 0.040),
+        ("generic_03", 0.18, 0.055),
+        ("generic_04", 0.26, 0.070),
+        ("generic_05", 0.34, 0.085),
+    ]
+
+
 def load_reference_curves(quantity: str) -> list[dict]:
     curves = load_digitized_curves(DATA_DIR)
     if quantity == "ci":
@@ -263,7 +274,7 @@ def summarize_pointwise_curve_levels(curves: list[dict]) -> pd.DataFrame:
 
 
 def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
-    alpha_values = sorted(np.linspace(float(args.alpha_min), float(args.alpha_max), int(args.num_alpha)).tolist())
+    alpha_values = sorted(np.linspace(float(args.alpha_min), float(args.alpha_max), int(args.num_alpha)).tolist(), reverse=True)
     mach_values = sorted(np.linspace(float(args.mach_min), float(args.mach_max), int(args.num_mach)).tolist())
     cr_points = load_digitized_long(args.cr_points)
     ci_points = load_digitized_long(args.ci_points)
@@ -271,22 +282,61 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
     solution_lookup: dict[tuple[float, float], tuple[float, float]] = {}
     summary_rows: list[dict[str, object]] = []
 
+    def fallback_score(
+        *,
+        shooting_cr: float,
+        shooting_ci: float,
+        previous_mach: tuple[float, float] | None,
+        previous_alpha: tuple[float, float] | None,
+    ) -> float:
+        continuity_terms: list[float] = []
+        for neighbor in (previous_mach, previous_alpha):
+            if neighbor is None:
+                continue
+            continuity_terms.append(
+                float(
+                    np.hypot(
+                        0.25 * (shooting_cr - float(neighbor[0])),
+                        float(args.ci_weight) * (shooting_ci - float(neighbor[1])),
+                    )
+                )
+            )
+        continuity_penalty = 0.0 if not continuity_terms else float(np.mean(continuity_terms))
+        return float(float(args.continuity_weight) * continuity_penalty - shooting_ci)
+
     for alpha_idx, alpha in enumerate(alpha_values):
         targets_df = build_blumen_targets(mach_values, alpha, cr_points, ci_points)
         for mach_idx, mach in enumerate(mach_values):
             target = targets_df[targets_df["Mach"] == mach].iloc[0]
             blumen_cr = float(target["blumen_cr"])
             blumen_ci = float(target["blumen_ci"])
+            target_available = bool(np.isfinite(blumen_cr) and np.isfinite(blumen_ci))
 
             previous_mach = solution_lookup.get((alpha, mach_values[mach_idx - 1])) if mach_idx > 0 else None
             previous_alpha = solution_lookup.get((alpha_values[alpha_idx - 1], mach)) if alpha_idx > 0 else None
 
-            seeds = build_seed_list(
-                blumen_cr=blumen_cr,
-                blumen_ci=blumen_ci,
-                previous_mach=previous_mach,
-                previous_alpha=previous_alpha,
-            )
+            if target_available:
+                seeds = build_seed_list(
+                    blumen_cr=blumen_cr,
+                    blumen_ci=blumen_ci,
+                    previous_mach=previous_mach,
+                    previous_alpha=previous_alpha,
+                )
+            else:
+                seeds = []
+                if previous_mach is not None:
+                    seeds.append(("previous_mach", float(previous_mach[0]), float(previous_mach[1])))
+                if previous_alpha is not None:
+                    seeds.append(("previous_alpha", float(previous_alpha[0]), float(previous_alpha[1])))
+                if previous_mach is not None and previous_alpha is not None:
+                    seeds.append(
+                        (
+                            "blend_neighbors",
+                            0.5 * (float(previous_mach[0]) + float(previous_alpha[0])),
+                            0.5 * (float(previous_mach[1]) + float(previous_alpha[1])),
+                        )
+                    )
+                seeds.extend(generic_seed_list())
 
             local_candidates: list[dict[str, object]] = []
             for seed_name, cr_center, ci_center in seeds:
@@ -312,19 +362,28 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
                             max_iter=int(args.max_iter),
                             grid_size=int(args.grid_size),
                         )
-                        score = ci_primary_score(
-                            shooting_cr=float(result.cr),
-                            shooting_ci=float(result.ci),
-                            blumen_cr=blumen_cr,
-                            blumen_ci=blumen_ci,
-                            previous_mach=previous_mach,
-                            previous_alpha=previous_alpha,
-                            ci_weight=float(args.ci_weight),
-                            cr_weight=float(args.cr_weight),
-                            continuity_weight=float(args.continuity_weight),
-                        )
+                        if target_available:
+                            score = ci_primary_score(
+                                shooting_cr=float(result.cr),
+                                shooting_ci=float(result.ci),
+                                blumen_cr=blumen_cr,
+                                blumen_ci=blumen_ci,
+                                previous_mach=previous_mach,
+                                previous_alpha=previous_alpha,
+                                ci_weight=float(args.ci_weight),
+                                cr_weight=float(args.cr_weight),
+                                continuity_weight=float(args.continuity_weight),
+                            )
+                        else:
+                            score = fallback_score(
+                                shooting_cr=float(result.cr),
+                                shooting_ci=float(result.ci),
+                                previous_mach=previous_mach,
+                                previous_alpha=previous_alpha,
+                            )
                         local_candidates.append(
                             {
+                                "target_available": target_available,
                                 "seed_name": seed_name,
                                 "seed_cr_center": float(cr_center),
                                 "seed_ci_center": float(ci_center),
@@ -357,6 +416,7 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
                 key=lambda row: (
                     0 if bool(row["success"]) else 1,
                     float(row["ci_primary_score"]),
+                    -float(row["shooting_ci"]),
                     float(row["stage1_mismatch"] + row["stage2_mismatch"]),
                 ),
             )
@@ -367,6 +427,7 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
                     "Mach": mach,
                     "blumen_cr": blumen_cr,
                     "blumen_ci": blumen_ci,
+                    "blumen_target_available": bool(target_available),
                     "n_candidates": len(ranked),
                     "best_seed_name": str(best["seed_name"]),
                     "best_seed_cr_center": float(best["seed_cr_center"]),
@@ -411,7 +472,11 @@ def build_mode_seed_list(
     blumen_ci: float,
     args: argparse.Namespace,
 ) -> list[tuple[str, float, float]]:
-    seeds: list[tuple[str, float, float]] = [("blumen", blumen_cr, blumen_ci)]
+    seeds: list[tuple[str, float, float]] = []
+    if np.isfinite(blumen_cr) and np.isfinite(blumen_ci):
+        seeds.append(("blumen", blumen_cr, blumen_ci))
+    else:
+        seeds.extend(generic_seed_list())
     cr_values = np.linspace(float(args.mode_cr_min), float(args.mode_cr_max), int(args.mode_seed_cr_count))
     ci_values = np.linspace(float(args.mode_ci_min), float(args.mode_ci_max), int(args.mode_seed_ci_count))
     for i, cr in enumerate(cr_values):
@@ -449,6 +514,7 @@ def extract_top_modes_for_points(args: argparse.Namespace) -> tuple[pd.DataFrame
         target = target_df.iloc[0]
         blumen_cr = float(target["blumen_cr"])
         blumen_ci = float(target["blumen_ci"])
+        target_available = bool(np.isfinite(blumen_cr) and np.isfinite(blumen_ci))
         seeds = build_mode_seed_list(blumen_cr=blumen_cr, blumen_ci=blumen_ci, args=args)
 
         point_candidates: list[dict[str, object]] = []
@@ -488,6 +554,7 @@ def extract_top_modes_for_points(args: argparse.Namespace) -> tuple[pd.DataFrame
                         "retry_index": int(retry_idx),
                         "blumen_cr": blumen_cr,
                         "blumen_ci": blumen_ci,
+                        "blumen_target_available": bool(target_available),
                         "shooting_cr": float(result.cr),
                         "shooting_ci": float(result.ci),
                         "shooting_omega_i": float(result.omega_i),
