@@ -41,6 +41,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--match-y", type=float, default=1.0)
     parser.add_argument("--use-mapping", action="store_true", default=True)
     parser.add_argument("--mapping-scale", type=float, default=5.0)
+    parser.add_argument("--min-y-limit", type=float, default=10.0)
+    parser.add_argument("--max-y-limit", type=float, default=80.0)
+    parser.add_argument("--y-limit-factor", type=float, default=4.0)
+    parser.add_argument("--amp-lower-bound", type=float, default=-15.0)
+    parser.add_argument("--amp-upper-bound", type=float, default=5.0)
     parser.add_argument("--cr-half-windows", type=float, nargs="+", default=[0.015, 0.03, 0.06, 0.10])
     parser.add_argument("--ci-half-windows", type=float, nargs="+", default=[0.008, 0.015, 0.03])
     parser.add_argument("--retry-growth", type=float, default=1.75)
@@ -124,6 +129,11 @@ def solve_in_box(
     match_y: float,
     use_mapping: bool,
     mapping_scale: float,
+    min_y_limit: float,
+    max_y_limit: float,
+    y_limit_factor: float,
+    amp_lower_bound: float,
+    amp_upper_bound: float,
     cr_center: float,
     ci_center: float,
     cr_half_window: float,
@@ -137,6 +147,11 @@ def solve_in_box(
         match_y=match_y,
         use_mapping=use_mapping,
         mapping_scale=mapping_scale,
+        min_y_limit=min_y_limit,
+        max_y_limit=max_y_limit,
+        y_limit_factor=y_limit_factor,
+        ln_p_right_min=amp_lower_bound,
+        ln_p_right_max=amp_upper_bound,
     )
     result = solver.solve(
         cr_min=max(0.0, cr_center - cr_half_window),
@@ -156,6 +171,11 @@ def multistart_single_box(
     match_y: float,
     use_mapping: bool,
     mapping_scale: float,
+    min_y_limit: float,
+    max_y_limit: float,
+    y_limit_factor: float,
+    amp_lower_bound: float,
+    amp_upper_bound: float,
     cr_center: float,
     ci_center: float,
     cr_half_window: float,
@@ -178,6 +198,11 @@ def multistart_single_box(
             match_y=match_y,
             use_mapping=use_mapping,
             mapping_scale=mapping_scale,
+            min_y_limit=min_y_limit,
+            max_y_limit=max_y_limit,
+            y_limit_factor=y_limit_factor,
+            amp_lower_bound=amp_lower_bound,
+            amp_upper_bound=amp_upper_bound,
             cr_center=cr_center,
             ci_center=ci_center,
             cr_half_window=current_cr_half,
@@ -321,6 +346,11 @@ def main() -> None:
                         match_y=float(args.match_y),
                         use_mapping=bool(args.use_mapping),
                         mapping_scale=float(args.mapping_scale),
+                        min_y_limit=float(args.min_y_limit),
+                        max_y_limit=float(args.max_y_limit),
+                        y_limit_factor=float(args.y_limit_factor),
+                        amp_lower_bound=float(args.amp_lower_bound),
+                        amp_upper_bound=float(args.amp_upper_bound),
                         cr_center=float(cr_center),
                         ci_center=float(ci_center),
                         cr_half_window=float(cr_half),
@@ -358,6 +388,7 @@ def main() -> None:
                         "err_ci_vs_blumen": abs(float(result.ci) - blumen_ci),
                         "stage1_mismatch": float(result.stage1_mismatch),
                         "stage2_mismatch": float(result.stage2_mismatch),
+                        "ln_p_start_right": float(result.ln_p_start_right),
                         "spectral_success": bool(result.spectral_success),
                         "mode_success": bool(result.mode_success),
                         "success": bool(result.success),
@@ -413,10 +444,19 @@ def main() -> None:
                 "best_err_ci_vs_blumen": float(best["err_ci_vs_blumen"]),
                 "best_stage1_mismatch": float(best["stage1_mismatch"]),
                 "best_stage2_mismatch": float(best["stage2_mismatch"]),
+                "best_ln_p_start_right": float(best["ln_p_start_right"]),
                 "best_spectral_success": bool(best["spectral_success"]),
                 "best_mode_success": bool(best["mode_success"]),
                 "best_success": bool(best["success"]),
                 "best_score_vs_blumen": float(best["score_vs_blumen"]),
+                "match_y": float(args.match_y),
+                "use_mapping": bool(args.use_mapping),
+                "mapping_scale": float(args.mapping_scale),
+                "min_y_limit": float(args.min_y_limit),
+                "max_y_limit": float(args.max_y_limit),
+                "y_limit_factor": float(args.y_limit_factor),
+                "amp_lower_bound": float(args.amp_lower_bound),
+                "amp_upper_bound": float(args.amp_upper_bound),
                 "y_limit": float(profile["y_limit"]),
                 **diag,
             }

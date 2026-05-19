@@ -115,6 +115,9 @@ def reconstruct_shooting_fields(
     match_y: float,
     use_mapping: bool,
     mapping_scale: float,
+    min_y_limit: float,
+    max_y_limit: float,
+    y_limit_factor: float,
 ) -> dict[str, np.ndarray]:
     solver = Mstab17SupersonicSolver(
         alpha=alpha,
@@ -122,6 +125,9 @@ def reconstruct_shooting_fields(
         match_y=match_y,
         use_mapping=use_mapping,
         mapping_scale=mapping_scale,
+        min_y_limit=min_y_limit,
+        max_y_limit=max_y_limit,
+        y_limit_factor=y_limit_factor,
     )
     sol_left, _, sol_right_full, _ = solver.get_trajectories(cr, ci, ln_p_start_right=ln_p_start_right)
     if not (sol_left.success and sol_right_full.success):
@@ -323,6 +329,9 @@ def main() -> None:
             match_y=float(row["match_y"]) if "match_y" in row.index and pd.notna(row["match_y"]) else 1.0,
             use_mapping=parse_bool_like(row["use_mapping"], default=True) if "use_mapping" in row.index else True,
             mapping_scale=float(row["mapping_scale"]) if "mapping_scale" in row.index and pd.notna(row["mapping_scale"]) else 5.0,
+            min_y_limit=float(row["min_y_limit"]) if "min_y_limit" in row.index and pd.notna(row["min_y_limit"]) else 10.0,
+            max_y_limit=float(row["max_y_limit"]) if "max_y_limit" in row.index and pd.notna(row["max_y_limit"]) else 80.0,
+            y_limit_factor=float(row["y_limit_factor"]) if "y_limit_factor" in row.index and pd.notna(row["y_limit_factor"]) else 4.0,
         )
         partner, reconstructed = build_partner_and_reconstruction(principal)
 

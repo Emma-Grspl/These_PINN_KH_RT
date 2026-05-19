@@ -62,9 +62,12 @@ class Mstab17SupersonicSolver:
         atol: float = 1e-12,
         min_y_limit: float = 10.0,
         max_y_limit: float = 80.0,
+        y_limit_factor: float = 4.0,
         amplitude_match_y: float | None = None,
         use_mapping: bool = False,
         mapping_scale: float = 5.0,
+        ln_p_right_min: float = -15.0,
+        ln_p_right_max: float = 5.0,
     ):
         self.alpha = float(alpha)
         self.Mach = float(Mach)
@@ -74,10 +77,19 @@ class Mstab17SupersonicSolver:
         self.atol = atol
         self.min_y_limit = min_y_limit
         self.max_y_limit = max_y_limit
+        self.y_limit_factor = float(y_limit_factor)
         self.amplitude_match_y = self.match_y if amplitude_match_y is None else float(amplitude_match_y)
         self.use_mapping = bool(use_mapping)
         self.mapping_scale = float(mapping_scale)
+        self.ln_p_right_min = float(ln_p_right_min)
+        self.ln_p_right_max = float(ln_p_right_max)
         self.ci_floor = 1e-6
+        if self.max_y_limit < self.min_y_limit:
+            raise ValueError("max_y_limit doit etre >= min_y_limit.")
+        if self.y_limit_factor <= 0.0:
+            raise ValueError("y_limit_factor doit etre > 0.")
+        if self.ln_p_right_min >= self.ln_p_right_max:
+            raise ValueError("ln_p_right_min doit etre < ln_p_right_max.")
 
     @staticmethod
     def base_velocity(y: np.ndarray | float) -> np.ndarray | float:
@@ -112,7 +124,7 @@ class Mstab17SupersonicSolver:
         gamma_left, gamma_right = self.asymptotic_gammas(cr, ci)
         decay_left = max(gamma_left.real, 1e-8)
         decay_right = max(-gamma_right.real, 1e-8)
-        estimate = 4.0 * max(1.0 / decay_left, 1.0 / decay_right)
+        estimate = self.y_limit_factor * max(1.0 / decay_left, 1.0 / decay_right)
         return float(np.clip(estimate, self.min_y_limit, self.max_y_limit))
 
     def xi_to_y(self, xi: np.ndarray | float) -> np.ndarray | float:
@@ -360,7 +372,7 @@ class Mstab17SupersonicSolver:
         )
         amp_opt = minimize_scalar(
             lambda ln_p_right: self.stage2_objective(ln_p_right, cr_star, ci_star),
-            bounds=(-15.0, 5.0),
+            bounds=(self.ln_p_right_min, self.ln_p_right_max),
             method="bounded",
         )
         stage2_err = float(amp_opt.fun)

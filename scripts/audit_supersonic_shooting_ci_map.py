@@ -44,6 +44,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--match-y", type=float, default=1.0)
     parser.add_argument("--use-mapping", action="store_true", default=True)
     parser.add_argument("--mapping-scale", type=float, default=5.0)
+    parser.add_argument("--min-y-limit", type=float, default=10.0)
+    parser.add_argument("--max-y-limit", type=float, default=80.0)
+    parser.add_argument("--y-limit-factor", type=float, default=4.0)
+    parser.add_argument("--amp-lower-bound", type=float, default=-15.0)
+    parser.add_argument("--amp-upper-bound", type=float, default=5.0)
     parser.add_argument("--cr-half-windows", type=float, nargs="+", default=[0.015, 0.03, 0.06, 0.10])
     parser.add_argument("--ci-half-windows", type=float, nargs="+", default=[0.008, 0.015, 0.03])
     parser.add_argument("--retry-growth", type=float, default=1.75)
@@ -261,6 +266,11 @@ def main() -> None:
                             match_y=float(args.match_y),
                             use_mapping=bool(args.use_mapping),
                             mapping_scale=float(args.mapping_scale),
+                            min_y_limit=float(args.min_y_limit),
+                            max_y_limit=float(args.max_y_limit),
+                            y_limit_factor=float(args.y_limit_factor),
+                            amp_lower_bound=float(args.amp_lower_bound),
+                            amp_upper_bound=float(args.amp_upper_bound),
                             cr_center=float(cr_center),
                             ci_center=float(ci_center),
                             cr_half_window=float(cr_half),
@@ -372,6 +382,11 @@ def main() -> None:
                     "match_y": float(args.match_y),
                     "use_mapping": bool(args.use_mapping),
                     "mapping_scale": float(args.mapping_scale),
+                    "min_y_limit": float(args.min_y_limit),
+                    "max_y_limit": float(args.max_y_limit),
+                    "y_limit_factor": float(args.y_limit_factor),
+                    "amp_lower_bound": float(args.amp_lower_bound),
+                    "amp_upper_bound": float(args.amp_upper_bound),
                     "y_limit": float(profile["y_limit"]),
                     "left_relative_mach": left_relative_mach,
                     "right_relative_mach": right_relative_mach,

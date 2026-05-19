@@ -300,13 +300,6 @@ def main() -> None:
         raise ValueError(f"{args.summary_csv} doit contenir au moins alpha et Mach.")
     cr_col, ci_col, ln_col = infer_summary_columns(summary_raw)
 
-    required_runtime_cols = {"match_y", "use_mapping", "mapping_scale"}
-    missing_runtime = required_runtime_cols.difference(summary_raw.columns)
-    if missing_runtime:
-        raise ValueError(
-            f"{args.summary_csv} doit contenir les colonnes runtime {sorted(missing_runtime)} pour reconstruire les profils."
-        )
-
     mode_rows: list[dict[str, object]] = []
     profile_rows: list[dict[str, object]] = []
     profile_lookup: dict[tuple[float, float], tuple[np.ndarray, np.ndarray]] = {}
@@ -317,9 +310,12 @@ def main() -> None:
         solver = Mstab17SupersonicSolver(
             alpha=alpha,
             Mach=mach,
-            match_y=float(row["match_y"]),
-            use_mapping=bool(row["use_mapping"]),
-            mapping_scale=float(row["mapping_scale"]),
+            match_y=float(row["match_y"]) if "match_y" in row.index and pd.notna(row["match_y"]) else 1.0,
+            use_mapping=bool(row["use_mapping"]) if "use_mapping" in row.index and pd.notna(row["use_mapping"]) else True,
+            mapping_scale=float(row["mapping_scale"]) if "mapping_scale" in row.index and pd.notna(row["mapping_scale"]) else 5.0,
+            min_y_limit=float(row["min_y_limit"]) if "min_y_limit" in row.index and pd.notna(row["min_y_limit"]) else 10.0,
+            max_y_limit=float(row["max_y_limit"]) if "max_y_limit" in row.index and pd.notna(row["max_y_limit"]) else 80.0,
+            y_limit_factor=float(row["y_limit_factor"]) if "y_limit_factor" in row.index and pd.notna(row["y_limit_factor"]) else 4.0,
         )
         profile = extract_shooting_profile(
             solver,
@@ -340,9 +336,12 @@ def main() -> None:
                 "shooting_cr": float(row[cr_col]),
                 "shooting_ci": float(row[ci_col]),
                 "ln_p_start_right": float(row[ln_col]),
-                "match_y": float(row["match_y"]),
-                "use_mapping": bool(row["use_mapping"]),
-                "mapping_scale": float(row["mapping_scale"]),
+                "match_y": float(row["match_y"]) if "match_y" in row.index and pd.notna(row["match_y"]) else 1.0,
+                "use_mapping": bool(row["use_mapping"]) if "use_mapping" in row.index and pd.notna(row["use_mapping"]) else True,
+                "mapping_scale": float(row["mapping_scale"]) if "mapping_scale" in row.index and pd.notna(row["mapping_scale"]) else 5.0,
+                "min_y_limit": float(row["min_y_limit"]) if "min_y_limit" in row.index and pd.notna(row["min_y_limit"]) else 10.0,
+                "max_y_limit": float(row["max_y_limit"]) if "max_y_limit" in row.index and pd.notna(row["max_y_limit"]) else 80.0,
+                "y_limit_factor": float(row["y_limit_factor"]) if "y_limit_factor" in row.index and pd.notna(row["y_limit_factor"]) else 4.0,
                 **metrics,
                 "overlap_prev_mach_center8": np.nan,
                 "rel_l2_prev_mach_center8": np.nan,
