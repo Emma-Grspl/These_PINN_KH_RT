@@ -34,7 +34,7 @@ Objectif :
 - le shooting est retenu comme solveur classique de référence en supersonique
 - l'accord en `c_i` est robuste et sert de benchmark principal
 - le `c_r` digitalisé de Blumen est localement trop peu contraint pour servir de vérité ponctuelle stricte dans la zone `alpha = 0.2`, `Mach = 1.25-1.30`
-- le GEP n'est pas retenu comme solveur de référence car il ne reproduit pas correctement `c_i`
+- le GEP n'est pas retenu comme solveur de référence : il peut retrouver ponctuellement une eigenvaleur crédible sur des cas ciblés, mais pas une reconstruction modale suffisamment propre et robuste
 
 Livrables attendus :
 
@@ -52,10 +52,11 @@ Objectif :
 
 État actuel :
 
-- un baseline fixe en Mach est disponible à `M = 0.5`
+- le baseline fixe en Mach à `M = 0.5` est figé dans [assets/pinn_subsonic/frozen_fixed_mach_alpha_sweep_best](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/pinn_subsonic/frozen_fixed_mach_alpha_sweep_best)
 - la supervision légère de `c_i` est justifiée et calibrée
 - la reconstruction modale reste le verrou principal
 - les expériences récentes montrent qu'il faut désormais distinguer trois régimes en `alpha`
+- la prochaine étape immédiate est un sweep subsonique sur `(alpha, Mach)` pour reconstruire les isolignes `c_i` et quelques modes
 
 Décision méthodologique sur les régimes en `alpha` :
 
@@ -83,8 +84,11 @@ Conséquence pratique :
 Livrables attendus :
 
 - baseline PINN subsonique fiable sur une ligne `Mach` fixée
-- extension en `Mach`
-- audit d'erreur de mode en fonction de `alpha` et `Mach`
+- sweep PINN subsonique sur `(alpha, Mach)`
+- carte `c_i(alpha, Mach)` côté classique et côté PINN
+- heatmap d'erreur sur `c_i`
+- isolignes `c_i` PINN vs classique
+- quelques reconstructions modales sur des points `(alpha, Mach)` représentatifs
 
 ## Étape 4. PINN supersonique sur `(alpha, Mach)` pour apprendre `c_i + c_r + mode`
 
@@ -106,9 +110,9 @@ Livrables attendus :
 
 ## Ordre de travail retenu
 
-1. verrouiller le classique subsonique si nécessaire sur les métriques de mode
-2. verrouiller le classique supersonique sur la bonne branche
-3. consolider le PINN subsonique
+1. garder figé le classique subsonique de référence
+2. garder figé le classique supersonique de référence avec le shooting
+3. étendre le PINN subsonique de la ligne `Mach = 0.5` vers un sweep `(alpha, Mach)`
 4. seulement ensuite attaquer le PINN supersonique
 
 ## Critère de passage entre étapes

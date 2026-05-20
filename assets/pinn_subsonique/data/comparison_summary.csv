@@ -1,3 +1,0 @@
-label,best_epoch,best_audit_ci_mae,best_audit_p_rel,last_epoch,last_ci_mae,last_p_rel,run_dir,n_alpha_supervision,enable_classic_ci_supervision
-hybrid_8pt,2900,0.0029938962484509,0.3461241752631832,3000,0.0084992451268018,0.3423936944646187,model_saved/kh_subsonic_fixed_mach_M05_ci_supervision_vs_physics/hybrid_8pt,8,True
-physics_only,1,0.1801531589554567,0.623207105910691,3000,0.1801531589554567,0.3884210676736844,model_saved/kh_subsonic_fixed_mach_M05_ci_supervision_vs_physics/physics_only,0,False

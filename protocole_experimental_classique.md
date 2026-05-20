@@ -15,9 +15,9 @@ Ce document résume l'état du solveur classique, séparément en subsonique et 
 - verrouillage d'une référence subsonique via [hybrid_subsonic_scan.py](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/classical_solver/subsonic/hybrid_subsonic_scan.py)
 - documentation du workflow de référence dans [classical_solver/subsonic/README.md](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/classical_solver/subsonic/README.md)
 - production d'artefacts de référence :
-  - [subsonic_hybrid_growth_map.csv](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/blumen_shooting_hybrid/subsonic_hybrid_growth_map.csv)
-  - [subsonic_hybrid_vs_blumen.png](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/blumen_shooting_hybrid/subsonic_hybrid_vs_blumen.png)
-  - [subsonic_hybrid_error_summary.json](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/blumen_shooting_hybrid/subsonic_hybrid_error_summary.json)
+  - [subsonic_hybrid_growth_map.csv](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/classic_subsonic/data/subsonic_hybrid_growth_map.csv)
+  - [subsonic_hybrid_vs_blumen.png](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/classic_subsonic/plots/subsonic_hybrid_vs_blumen.png)
+  - [subsonic_hybrid_error_summary.json](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/classic_subsonic/data/subsonic_hybrid_error_summary.json)
 - usage du classique subsonique comme référence pour comparer les modes PINN sur des sweeps en `alpha` à `Mach` fixé
 
 ### Pistes déjà explorées
@@ -103,6 +103,7 @@ En une phrase :
 - formaliser proprement la référence de mode subsonique si l'objectif est de publier des comparaisons modales détaillées
 - décider si la référence classique de mode doit être stockée sur une grille complète `(alpha, Mach)` ou seulement générée à la demande
 - garder la cohérence entre les métriques de comparaison du classique et celles utilisées côté PINN
+- fournir au prochain protocole PINN subsonique une base 2D `(alpha, Mach) -> c_i` assez propre pour reconstruire des isolignes
 
 ## Supersonique
 
@@ -176,12 +177,10 @@ En une phrase :
 
 ### Ce qu'il reste à faire
 
-- consolider la continuation shooting sur une ligne de Mach pour verrouiller simultanément `c_r` et `c_i`
-- utiliser cette branche shooting comme référence d'audit contre le GEP
-- si le GEP reste loin en `c_i`, revoir la formulation GEP, la résolution ou les paramètres numériques
-- si une branche GEP pertinente réapparaît après cela, seulement alors revenir à un protocole de sélection/ranking
-- ensuite verrouiller un protocole valable sur une grille `(alpha, Mach)`
-- une fois la bonne branche trouvée, reconstruire des modes et refaire les isolignes sans utiliser Blumen comme seed, seulement comme audit
+- le shooting est maintenant la référence pratique figée
+- le GEP est mis de côté comme outil de diagnostic spectral, pas comme solveur de vérité
+- les prochains travaux classiques supersoniques ne sont plus prioritaires avant l'ouverture du chantier PINN supersonique
+- si on revient au GEP plus tard, ce sera pour une reformulation des bords, du mapping ou de la résolution, pas pour raffiner encore le ranking courant
 
 ### Position méthodologique retenue
 

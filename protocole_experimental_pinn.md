@@ -26,6 +26,25 @@ Ce document résume l'état du travail PINN, ce qui a déjà été essayé, ce q
 - le budget de supervision minimal retenu actuellement est de 8 points classiques
 - le cas physique pur pour `c_i` échoue clairement par rapport au cas hybride
 - la baseline hybride 8 points constitue aujourd'hui la meilleure base de travail pour le subsonique
+- le meilleur cas haut-`alpha` à `Mach` fixé est maintenant figé dans [assets/pinn_subsonic/frozen_fixed_mach_alpha_sweep_best](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/assets/pinn_subsonic/frozen_fixed_mach_alpha_sweep_best)
+
+### Cas figé retenu à `Mach` fixé
+
+Le cas de référence retenu pour fermer la phase `Mach` fixé est :
+
+- protocole `classic_two_stage_repair`
+- checkpoint retenu : `stage_b_pressure_overlap/model_best.pt`
+
+Lecture méthodologique :
+
+- le stage `balanced full-mode` seul améliore peu
+- le gain utile vient du stage `pressure + balanced overlap`
+- le refinément ultérieur améliore légèrement `p_rel`, mais reperd trop sur `peak`
+
+Conclusion :
+
+- le run figé est le meilleur compromis global
+- le refinément n'est conservé que comme test de sensibilité, pas comme référence principale
 
 ### Ce qui a été testé pour le mode
 
@@ -103,6 +122,20 @@ La branche `first_order_real` ne sera donc réouverte que si une motivation thé
 - figer le baseline `c_i` avec 8 points de supervision légère
 - ne pas surpromettre la reconstruction modale tant que les courbes d'erreur de mode ne sont pas bonnes
 - utiliser le classique comme vérité terrain explicite pour amplitude et phase
+
+### Prochaine étape immédiate
+
+Avant tout passage au supersonique, la priorité est désormais :
+
+- un sweep subsonique sur `(alpha, Mach)`
+- avec sortie de `c_i(alpha, Mach)`
+- heatmap d'erreur sur `c_i`
+- isolignes `c_i` PINN vs classique
+- et quelques modes représentatifs
+
+Le protocole dédié est dans :
+
+- [protocole_pinn_subsonic_alpha_mach_sweep.md](/Users/emma.grospellier/Thèse/These_PINN_KH_RT/protocole_pinn_subsonic_alpha_mach_sweep.md)
 
 ### Ce qu'il reste à faire ensuite
 
@@ -242,7 +275,7 @@ Jean Zay ne doit servir qu'après ce tri initial, pour :
 ### Situation actuelle
 
 - le travail PINN supersonique n'est pas encore réellement lancé
-- ce n'est pas un retard méthodologique : la référence classique supersonique n'est pas encore verrouillée
+- ce n'est pas un retard méthodologique : la priorité passe d'abord par le sweep subsonique `(alpha, Mach)` après gel des références classiques
 
 ### Pourquoi il ne faut pas aller trop vite
 

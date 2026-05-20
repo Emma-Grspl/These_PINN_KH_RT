@@ -1,0 +1,61 @@
+Job PINN subsonique KH high-alpha classic-two-stage-repair lance sur r9i7n5
+Mach=0.5 alpha_target=0.85 bande=[0.85, 0.85]
+Hypothese: stage A balanced full-mode, stage B pressure + balanced overlap avec c_i gele
+Warm start=model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_balanced_full_mode_supervision
+Stage A: epochs=600 lr=1e-4 balanced_w=10.0
+Stage B: epochs=1000 lr=8e-5 mode_w=10.0 balanced_w=4.0
+CPUs par tache: 10
+Tue May 19 10:52:44 AM CEST 2026
+Tue May 19 10:52:44 2026       
++-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 580.126.16             Driver Version: 580.126.16     CUDA Version: 13.0     |
++-----------------------------------------+------------------------+----------------------+
+| GPU  Name                 Persistence-M | Bus-Id          Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp   Perf          Pwr:Usage/Cap |           Memory-Usage | GPU-Util  Compute M. |
+|                                         |                        |               MIG M. |
+|=========================================+========================+======================|
+|   0  Tesla V100-SXM2-32GB           On  |   00000000:1C:00.0 Off |                    0 |
+| N/A   46C    P0             46W /  300W |       0MiB /  32768MiB |      0%      Default |
+|                                         |                        |                  N/A |
++-----------------------------------------+------------------------+----------------------+
+
++-----------------------------------------------------------------------------------------+
+| Processes:                                                                              |
+|  GPU   GI   CI              PID   Type   Process name                        GPU Memory |
+|        ID   ID                                                               Usage      |
+|=========================================================================================|
+|  No running processes found                                                             |
++-----------------------------------------------------------------------------------------+
+Two-stage high-alpha repair plan
+alpha_target=0.850 band=[0.850, 0.850]
+warm start=model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_balanced_full_mode_supervision/model_best.pt
+stage_a: epochs=600 lr=1.00e-04 balanced_w=10.00
+stage_b: epochs=1000 lr=8.00e-05 mode_w=10.00 balanced_w=4.00
+[stage_a_balanced] warm metrics alpha_target=0.850 ci_err=1.555e-03 p_rel=9.664e-01 env=8.119e-01 phase=5.108e-01 peak=1.052e+01
+Warm start loaded from model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_balanced_full_mode_supervision/model_best.pt (strict=True)
+Epoch     1 | loss=1.950e+01 | ci_mae=1.555e-03 | p_rel=9.724e-01 | env=8.062e-01 | phase=5.116e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   100 | loss=2.089e+01 | ci_mae=1.555e-03 | p_rel=9.595e-01 | env=8.439e-01 | phase=5.123e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   200 | loss=1.847e+01 | ci_mae=1.555e-03 | p_rel=9.525e-01 | env=8.467e-01 | phase=4.959e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   300 | loss=2.079e+01 | ci_mae=1.555e-03 | p_rel=9.605e-01 | env=8.622e-01 | phase=5.010e-01 | peak=1.064e+01 | n_focus=1 | L=3.000
+Epoch   400 | loss=2.955e+01 | ci_mae=1.555e-03 | p_rel=9.761e-01 | env=8.014e-01 | phase=5.030e-01 | peak=9.033e+00 | n_focus=1 | L=3.000
+Epoch   500 | loss=1.973e+01 | ci_mae=1.555e-03 | p_rel=9.646e-01 | env=8.716e-01 | phase=5.283e-01 | peak=1.064e+01 | n_focus=1 | L=3.000
+Epoch   600 | loss=1.937e+01 | ci_mae=1.555e-03 | p_rel=9.663e-01 | env=8.654e-01 | phase=5.224e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+[stage_a_balanced] done target_ci_err=1.555e-03 target_p_rel=9.905e-01 target_env=7.926e-01 target_phase=5.050e-01 target_peak=1.052e+01
+[stage_a_balanced] summary written to model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_two_stage_repair/stage_a_balanced/stage_summary.csv
+[stage_b_pressure_overlap] warm metrics alpha_target=0.850 ci_err=1.555e-03 p_rel=9.905e-01 env=7.926e-01 phase=5.050e-01 peak=1.052e+01
+Warm start loaded from model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_two_stage_repair/stage_a_balanced/model_best.pt (strict=True)
+Epoch     1 | loss=1.716e+01 | ci_mae=1.555e-03 | p_rel=9.777e-01 | env=7.952e-01 | phase=5.004e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   100 | loss=1.818e+01 | ci_mae=1.555e-03 | p_rel=9.356e-01 | env=7.954e-01 | phase=4.871e-01 | peak=9.033e+00 | n_focus=1 | L=3.000
+Epoch   200 | loss=2.534e+01 | ci_mae=1.555e-03 | p_rel=9.523e-01 | env=8.110e-01 | phase=5.014e-01 | peak=1.176e+01 | n_focus=1 | L=3.000
+Epoch   300 | loss=2.353e+01 | ci_mae=1.555e-03 | p_rel=9.321e-01 | env=8.020e-01 | phase=5.007e-01 | peak=1.176e+01 | n_focus=1 | L=3.000
+Epoch   400 | loss=2.313e+01 | ci_mae=1.555e-03 | p_rel=9.235e-01 | env=7.835e-01 | phase=5.036e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   500 | loss=1.341e+01 | ci_mae=1.555e-03 | p_rel=9.215e-01 | env=7.610e-01 | phase=4.987e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch   600 | loss=1.989e+01 | ci_mae=1.555e-03 | p_rel=9.449e-01 | env=7.925e-01 | phase=5.067e-01 | peak=9.404e+00 | n_focus=1 | L=3.000
+Epoch   700 | loss=2.404e+01 | ci_mae=1.555e-03 | p_rel=9.205e-01 | env=7.969e-01 | phase=4.939e-01 | peak=1.176e+01 | n_focus=1 | L=3.000
+Epoch   800 | loss=2.311e+01 | ci_mae=1.555e-03 | p_rel=9.138e-01 | env=7.832e-01 | phase=4.969e-01 | peak=1.176e+01 | n_focus=1 | L=3.000
+Epoch   900 | loss=2.288e+01 | ci_mae=1.555e-03 | p_rel=9.100e-01 | env=7.778e-01 | phase=4.955e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+Epoch  1000 | loss=1.318e+01 | ci_mae=1.555e-03 | p_rel=9.074e-01 | env=7.676e-01 | phase=4.911e-01 | peak=1.052e+01 | n_focus=1 | L=3.000
+[stage_b_pressure_overlap] done target_ci_err=1.555e-03 target_p_rel=9.092e-01 target_env=7.593e-01 target_phase=4.901e-01 target_peak=8.909e+00
+[stage_b_pressure_overlap] summary written to model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_two_stage_repair/stage_b_pressure_overlap/stage_summary.csv
+regime=high_alpha_classic_two_stage_repair alpha_target=0.850 initial_p_rel=9.664e-01 stage_b_p_rel=9.092e-01 stage_b_env=7.593e-01 stage_b_phase=4.901e-01 stage_b_peak=8.909e+00
+Summary written to model_saved/kh_subsonic_fixed_mach_M05_highalpha_classic_two_stage_repair/classic_two_stage_repair_summary.csv

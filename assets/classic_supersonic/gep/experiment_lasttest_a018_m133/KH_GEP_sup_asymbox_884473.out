@@ -1,0 +1,24 @@
+Audit GEP supersonique asymptotic-box sur r1i7n25
+alpha=0.18 Mach=1.33
+N_POINTS=801 AUTO_N_POINTS=1 MAX_N_POINTS=2001
+mapping L=12.0 xi_max=1.0
+box factors: decay=4.0 oscillation=4.0
+q-box ratio cutoff=8.0
+force symmetric half box=1
+target override: cr=0.299826 ci=0.052354
+resolution targets: core<=1.0 -> 120 pts | center<=4.0 -> 300 pts | tail ppw=24.0
+output stem=supersonic_gep_lasttest_a018_m133
+Tue May 19 03:43:53 PM CEST 2026
+Asymptotic box calibration:
+ alpha  Mach  n_points mapping_kind  mapping_L  xi_max  auto_n_points  initial_n_points  max_n_points  core_half_width  min_points_core  center_half_width  min_points_center  tail_points_per_wavelength  tail_fraction_for_spacing target_source  target_cr  target_ci  gamma_left_real  gamma_left_imag  gamma_right_real  gamma_right_imag  kappa_left  kappa_right   q_left   q_right  left_decay_length  right_decay_length  left_wavelength  right_wavelength left_box_driver right_box_driver  left_q_box_enabled  right_q_box_enabled  force_symmetric_half_box  symmetric_half_box  left_box_capped  right_box_capped  left_half_box  right_half_box       y_min      y_max  dy_center  n_points_abs_y_le_1  n_points_abs_y_le_2  n_points_abs_y_le_4  n_points_abs_y_le_8  left_tail_dy_max  right_tail_dy_max  left_tail_dy_target  right_tail_dy_target  n_points_abs_y_le_core  n_points_abs_y_le_center  core_ok  center_ok  left_tail_ok  right_tail_ok  all_resolution_constraints_ok  n_points_selected  n_points_hit_cap
+  0.18  1.33      2001   finite_box       12.0     1.0           True               801          2001              1.0              120                4.0                300                        24.0                       0.15          user   0.299826   0.052354         0.015356         -0.25399         -0.072759         -0.028875    0.015356     0.072759 -0.25399 -0.028875          65.122698           13.744064        24.737972        217.600831           kappa            kappa                True                False                      True          260.490794            False             False     260.490794      260.490794 -260.490794 260.490794   0.011987                  167                  329                  633                 1111         73.750904          73.750904             1.030749              9.066701                     167                       633     True       True         False          False                          False               2001              True
+
+Top GEP modes ranked by c_i:
+ rank_by_ci  alpha  Mach  n_points mapping_kind  mapping_L  xi_max target_source  target_cr  target_ci       cr       ci  omega_i   abs_cr  distance_to_target
+          1   0.18  1.33      2001   finite_box       12.0     1.0          user   0.299826   0.052354 0.300274 0.052641 0.009475 0.300274            0.000532
+          2   0.18  1.33      2001   finite_box       12.0     1.0          user   0.299826   0.052354 0.296783 0.042020 0.007564 0.296783            0.010773
+
+Summary CSV: /lustre/fswork/projects/rech/fdb/usv13rn/These_PINN_KH_RT/assets/blumen_gep/supersonic_gep_lasttest_a018_m133_a0.180_m1.330_N2001_L12.00_summary.csv
+Box CSV: /lustre/fswork/projects/rech/fdb/usv13rn/These_PINN_KH_RT/assets/blumen_gep/supersonic_gep_lasttest_a018_m133_a0.180_m1.330_N2001_L12.00_box.csv
+Modes PDF: /lustre/fswork/projects/rech/fdb/usv13rn/These_PINN_KH_RT/assets/blumen_gep/supersonic_gep_lasttest_a018_m133_a0.180_m1.330_N2001_L12.00_modes.pdf
+u-zoom PDF: /lustre/fswork/projects/rech/fdb/usv13rn/These_PINN_KH_RT/assets/blumen_gep/supersonic_gep_lasttest_a018_m133_a0.180_m1.330_N2001_L12.00_u_zoom.pdf
