@@ -1,19 +1,24 @@
 #!/bin/bash
-#SBATCH -J KH_sub1D_modal_cmp
+#SBATCH --job-name=KH_sub1D_modal_cmp
+#SBATCH --output=slurm/log/%x_%j.out
+#SBATCH --error=slurm/log/%x_%j.err
 #SBATCH -A fdb@cpu
-#SBATCH -C icelake
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
+#SBATCH --cpus-per-task=32
 #SBATCH --hint=nomultithread
-#SBATCH --time=06:00:00
-#SBATCH -e slurm/log/KH_sub1D_modal_cmp_%j.err
-#SBATCH -o slurm/log/KH_sub1D_modal_cmp_%j.out
+#SBATCH --time=20:00:00
+#SBATCH --qos=qos_cpu-t3
 
 set -euo pipefail
 
+module purge
+module load python/3.11.5
+
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p slurm/log
+
+export PYTHONPATH="${SLURM_SUBMIT_DIR}:${PYTHONPATH:-}"
 
 echo "Comparaison des candidats PINN subsoniques 1D modaux sur $(hostname)"
 echo "CANDIDATES=${CANDIDATES:-hybrid_8pt riccati_multibranch modefocus_lowalpha}"
@@ -27,10 +32,12 @@ echo "OUTPUT_ROOT=${OUTPUT_ROOT:-assets/pinn_subsonic/mach_fixed_candidates}"
 date
 
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
+export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MPLCONFIGDIR="${SLURM_SUBMIT_DIR}/.mplconfig"
 
-srun python scripts/compare_kh_subsonic_fixed_mach_modal_candidates.py \
+srun python3 scripts/compare_kh_subsonic_fixed_mach_modal_candidates.py \
   --output-root "${OUTPUT_ROOT:-assets/pinn_subsonic/mach_fixed_candidates}" \
   --num-alpha-ci "${NUM_ALPHA_CI:-41}" \
   --num-alpha-modes "${NUM_ALPHA_MODES:-21}" \
