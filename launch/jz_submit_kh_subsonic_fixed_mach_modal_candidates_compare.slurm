@@ -13,7 +13,7 @@
 set -euo pipefail
 
 module purge
-module load python/3.11.5
+module load pytorch-gpu/py3/2.1.1
 
 cd "${SLURM_SUBMIT_DIR}"
 mkdir -p slurm/log
@@ -35,7 +35,8 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
-export MPLCONFIGDIR="${SLURM_SUBMIT_DIR}/.mplconfig"
+export MPLCONFIGDIR="${JOBSCRATCH:-/tmp}/mplconfig_${SLURM_JOB_ID}"
+mkdir -p "${MPLCONFIGDIR}"
 
 srun python3 scripts/compare_kh_subsonic_fixed_mach_modal_candidates.py \
   --output-root "${OUTPUT_ROOT:-assets/pinn_subsonic/mach_fixed_candidates}" \
