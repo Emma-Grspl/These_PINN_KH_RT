@@ -66,6 +66,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
     parser.add_argument("--output-stem", type=str, default="supersonic_shooting_reference_package")
     parser.add_argument(
+        "--resume-grid-summary",
+        type=Path,
+        default=None,
+        help="CSV de reprise pour la grille shooting. Si le fichier existe, les points deja calcules sont sautes.",
+    )
+    parser.add_argument(
         "--mode-points",
         type=str,
         nargs="*",
@@ -273,7 +279,14 @@ def summarize_pointwise_curve_levels(curves: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
+def _persist_partial_grid(summary_rows: list[dict[str, object]], resume_path: Path) -> None:
+    resume_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = resume_path.with_suffix(resume_path.suffix + ".tmp")
+    pd.DataFrame(summary_rows).to_csv(tmp_path, index=False)
+    tmp_path.replace(resume_path)
+
+
+def compute_shooting_grid(args: argparse.Namespace, *, resume_path: Path | None = None) -> pd.DataFrame:
     alpha_values = sorted(np.linspace(float(args.alpha_min), float(args.alpha_max), int(args.num_alpha)).tolist(), reverse=True)
     mach_values = sorted(np.linspace(float(args.mach_min), float(args.mach_max), int(args.num_mach)).tolist())
     cr_points = load_digitized_long(args.cr_points)
@@ -281,6 +294,25 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
 
     solution_lookup: dict[tuple[float, float], tuple[float, float]] = {}
     summary_rows: list[dict[str, object]] = []
+    completed: set[tuple[float, float]] = set()
+
+    if resume_path is not None and resume_path.exists():
+        existing = pd.read_csv(resume_path)
+        required_cols = {"alpha", "Mach", "best_shooting_cr", "best_shooting_ci"}
+        if required_cols.issubset(existing.columns):
+            for row in existing.to_dict(orient="records"):
+                alpha = float(row["alpha"])
+                mach = float(row["Mach"])
+                summary_rows.append(row)
+                completed.add((alpha, mach))
+                solution_lookup[(alpha, mach)] = (
+                    float(row["best_shooting_cr"]),
+                    float(row["best_shooting_ci"]),
+                )
+            print(
+                f"Resume shooting grid from {resume_path} "
+                f"with {len(completed)} completed points."
+            )
 
     def fallback_score(
         *,
@@ -307,6 +339,8 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
     for alpha_idx, alpha in enumerate(alpha_values):
         targets_df = build_blumen_targets(mach_values, alpha, cr_points, ci_points)
         for mach_idx, mach in enumerate(mach_values):
+            if (alpha, mach) in completed:
+                continue
             target = targets_df[targets_df["Mach"] == mach].iloc[0]
             blumen_cr = float(target["blumen_cr"])
             blumen_ci = float(target["blumen_ci"])
@@ -462,6 +496,13 @@ def compute_shooting_grid(args: argparse.Namespace) -> pd.DataFrame:
                 }
             )
             solution_lookup[(alpha, mach)] = (float(best["shooting_cr"]), float(best["shooting_ci"]))
+            if resume_path is not None:
+                _persist_partial_grid(summary_rows, resume_path)
+            print(
+                f"[grid] alpha={alpha:.3f} Mach={mach:.3f} "
+                f"ci={float(best['shooting_ci']):.5f} cr={float(best['shooting_cr']):.5f} "
+                f"success={bool(best['success'])}"
+            )
 
     return pd.DataFrame(summary_rows).sort_values(["alpha", "Mach"]).reset_index(drop=True)
 
@@ -727,6 +768,8 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = DEFAULT_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
+    summary_csv = output_dir / f"{args.output_stem}_grid_summary.csv"
+    resume_path = Path(args.resume_grid_summary) if args.resume_grid_summary is not None else summary_csv
 
     print("Construction du paquet de reference supersonique au tir")
     print(f"grid Mach: {float(args.mach_min):.3f} -> {float(args.mach_max):.3f} ({int(args.num_mach)} points)")
@@ -737,13 +780,13 @@ def main() -> None:
     )
     print(f"mode points: {' '.join(args.mode_points)}")
     print(f"output stem: {args.output_stem}")
+    print(f"resume grid summary: {resume_path}")
 
-    summary_df = compute_shooting_grid(args)
+    summary_df = compute_shooting_grid(args, resume_path=resume_path)
 
     ci_curves = load_reference_curves("ci")
     cr_curves = load_reference_curves("cr")
 
-    summary_csv = output_dir / f"{args.output_stem}_grid_summary.csv"
     ci_points_csv = output_dir / f"{args.output_stem}_ci_blumen_points.csv"
     cr_points_csv = output_dir / f"{args.output_stem}_cr_blumen_points.csv"
     ci_ref_png = output_dir / f"{args.output_stem}_ci_blumen_reference.png"
