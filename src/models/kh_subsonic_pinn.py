@@ -260,6 +260,30 @@ def build_fixed_mach_model_from_config(config: Mapping[str, object] | object) ->
     )
 
 
+def load_fixed_mach_state_dict_compat(
+    model: KHSubsonicFixedMachPINN,
+    state_dict: Mapping[str, torch.Tensor],
+) -> None:
+    remapped = dict(state_dict)
+    legacy_mode_keys = [key for key in remapped if key.startswith("mode_net.")]
+    has_new_mode_keys = any(key.startswith("mode_nets.0.") for key in remapped)
+    if legacy_mode_keys and not has_new_mode_keys:
+        for key in legacy_mode_keys:
+            suffix = key[len("mode_net.") :]
+            remapped[f"mode_nets.0.{suffix}"] = remapped.pop(key)
+
+    incompatible = model.load_state_dict(remapped, strict=False)
+    ignored_missing = {key for key in incompatible.missing_keys if key.startswith("mode_net.")}
+    ignored_unexpected = {key for key in incompatible.unexpected_keys if key.startswith("mode_net.")}
+    real_missing = [key for key in incompatible.missing_keys if key not in ignored_missing]
+    real_unexpected = [key for key in incompatible.unexpected_keys if key not in ignored_unexpected]
+    if real_missing or real_unexpected:
+        raise RuntimeError(
+            "Incompatible fixed-mach checkpoint: "
+            f"missing={real_missing}, unexpected={real_unexpected}"
+        )
+
+
 class KHSubsonicMultiMachPINN(nn.Module):
     """
     Prototype PINN subsonique 2D sur (alpha, Mach).

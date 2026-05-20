@@ -14,7 +14,11 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from classical_solver.subsonic.robust_subsonic_shooting import RobustSubsonicShootingSolver
-from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN, build_fixed_mach_model_from_config
+from src.models.kh_subsonic_pinn import (
+    KHSubsonicFixedMachPINN,
+    build_fixed_mach_model_from_config,
+    load_fixed_mach_state_dict_compat,
+)
 
 
 def build_model_from_config(config: pd.Series) -> KHSubsonicFixedMachPINN:
@@ -39,7 +43,7 @@ def main() -> None:
     model = build_model_from_config(config)
     checkpoint_path = args.checkpoint if args.checkpoint is not None else args.run_dir / "model_best.pt"
     state_dict = torch.load(checkpoint_path, map_location=device)
-    model.load_state_dict(state_dict)
+    load_fixed_mach_state_dict_compat(model, state_dict)
     model.to(device)
     model.eval()
 
