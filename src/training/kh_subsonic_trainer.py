@@ -33,6 +33,7 @@ from src.physics.kh_subsonic_residual import (
     riccati_center_constraints,
     riccati_shooting_match_loss,
     reconstruct_pressure_from_riccati,
+    reconstruct_pressure_p_y_from_riccati,
     xi_to_y,
 )
 
@@ -419,16 +420,19 @@ def reconstruct_predicted_full_mode(
     if not xi.requires_grad:
         xi.requires_grad_(True)
 
-    pr, pi, y_pred_t = reconstruct_predicted_pressure_mode(model, xi, alpha)
-    p = torch.complex(pr, pi)
+    if model.mode_representation == "riccati":
+        pr, pi, p_y, _, y_pred_t = reconstruct_pressure_p_y_from_riccati(model, xi, alpha, anchor_xi=0.0)
+        p = torch.complex(pr, pi)
+    else:
+        pr, pi, y_pred_t = reconstruct_predicted_pressure_mode(model, xi, alpha)
+        p = torch.complex(pr, pi)
 
-    p_r_xi = torch.autograd.grad(pr, xi, grad_outputs=torch.ones_like(pr), create_graph=True, retain_graph=True)[0]
-    p_i_xi = torch.autograd.grad(pi, xi, grad_outputs=torch.ones_like(pi), create_graph=True, retain_graph=True)[0]
-    p_xi = torch.complex(p_r_xi, p_i_xi)
-
-    mapping_scale = model.get_mapping_scale()
-    y_xi = dy_dxi(xi, mapping_scale)
-    p_y = p_xi / y_xi
+        mapping_scale = model.get_mapping_scale()
+        p_r_xi = torch.autograd.grad(pr, xi, grad_outputs=torch.ones_like(pr), create_graph=True, retain_graph=True)[0]
+        p_i_xi = torch.autograd.grad(pi, xi, grad_outputs=torch.ones_like(pi), create_graph=True, retain_graph=True)[0]
+        p_xi = torch.complex(p_r_xi, p_i_xi)
+        y_xi = dy_dxi(xi, mapping_scale)
+        p_y = p_xi / y_xi
 
     ci = model.get_ci(alpha)
     c = torch.complex(torch.zeros_like(ci), -ci)

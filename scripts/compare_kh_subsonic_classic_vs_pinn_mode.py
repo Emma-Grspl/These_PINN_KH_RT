@@ -16,7 +16,7 @@ if str(ROOT_DIR) not in sys.path:
 from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver
 from classical_solver.subsonic.robust_subsonic_shooting import RobustSubsonicShootingSolver
 from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN, build_fixed_mach_model_from_config
-from src.physics.kh_subsonic_residual import base_velocity, base_velocity_derivative, dy_dxi, xi_to_y
+from src.physics.kh_subsonic_residual import base_velocity, base_velocity_derivative, dy_dxi, reconstruct_pressure_p_y_from_riccati, xi_to_y
 
 
 def normalize_classic_mode(vector: np.ndarray, n_points: int, mach: float) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
@@ -53,19 +53,22 @@ def reconstruct_pinn_fields(
     xi.requires_grad_(True)
     alpha_tensor = torch.full_like(xi, float(alpha))
 
-    pred = model(xi, alpha_tensor)
-    p_r = pred[:, 0:1]
-    p_i = pred[:, 1:2]
-    p = p_r + 1j * p_i
+    if model.mode_representation == "riccati":
+        p_r, p_i, p_y, _, y = reconstruct_pressure_p_y_from_riccati(model, xi, alpha_tensor, anchor_xi=0.0)
+        p = p_r + 1j * p_i
+    else:
+        pred = model(xi, alpha_tensor)
+        p_r = pred[:, 0:1]
+        p_i = pred[:, 1:2]
+        p = p_r + 1j * p_i
 
-    p_r_xi = torch.autograd.grad(p_r, xi, grad_outputs=torch.ones_like(p_r), create_graph=False, retain_graph=True)[0]
-    p_i_xi = torch.autograd.grad(p_i, xi, grad_outputs=torch.ones_like(p_i), create_graph=False, retain_graph=True)[0]
-    p_xi = p_r_xi + 1j * p_i_xi
-
-    mapping_scale = model.get_mapping_scale().detach()
-    y = xi_to_y(xi, mapping_scale)
-    y_xi = dy_dxi(xi, mapping_scale)
-    p_y = p_xi / y_xi
+        mapping_scale = model.get_mapping_scale().detach()
+        y = xi_to_y(xi, mapping_scale)
+        p_r_xi = torch.autograd.grad(p_r, xi, grad_outputs=torch.ones_like(p_r), create_graph=False, retain_graph=True)[0]
+        p_i_xi = torch.autograd.grad(p_i, xi, grad_outputs=torch.ones_like(p_i), create_graph=False, retain_graph=True)[0]
+        p_xi = p_r_xi + 1j * p_i_xi
+        y_xi = dy_dxi(xi, mapping_scale)
+        p_y = p_xi / y_xi
 
     ci = float(model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).item())
     c = -1j * ci

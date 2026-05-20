@@ -73,18 +73,16 @@ def riccati_gamma_rhs(
     return -(gamma**2) - p_term * gamma + (alpha_c**2) * r_term
 
 
-def reconstruct_pressure_from_riccati(
-    model,
+def _reconstruct_riccati_pressure_core(
+    outputs: torch.Tensor,
     xi: torch.Tensor,
-    alpha: torch.Tensor,
+    mapping_scale: torch.Tensor,
     *,
     anchor_xi: float = 0.0,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    outputs = model(xi, alpha)
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kappa = outputs[:, 0:1]
     q = outputs[:, 1:2]
 
-    mapping_scale = model.get_mapping_scale()
     y = xi_to_y(xi, mapping_scale)
 
     order = torch.argsort(y[:, 0])
@@ -115,7 +113,43 @@ def reconstruct_pressure_from_riccati(
     inverse[order] = torch.arange(order.shape[0], device=order.device)
     pr = pr_sorted[inverse].view(-1, 1)
     pi = pi_sorted[inverse].view(-1, 1)
+    gamma = torch.complex(kappa, q)
+    p = torch.complex(pr, pi)
+    p_y = gamma * p
+    return pr, pi, p_y, gamma, y
+
+
+def reconstruct_pressure_from_riccati(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    *,
+    anchor_xi: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    outputs = model(xi, alpha)
+    pr, pi, _, _, y = _reconstruct_riccati_pressure_core(
+        outputs,
+        xi,
+        model.get_mapping_scale(),
+        anchor_xi=anchor_xi,
+    )
     return pr, pi, y
+
+
+def reconstruct_pressure_p_y_from_riccati(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    *,
+    anchor_xi: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    outputs = model(xi, alpha)
+    return _reconstruct_riccati_pressure_core(
+        outputs,
+        xi,
+        model.get_mapping_scale(),
+        anchor_xi=anchor_xi,
+    )
 
 
 def extract_pressure_components(outputs: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
@@ -131,42 +165,30 @@ def reconstruct_pressure_from_riccati_2d(
     anchor_xi: float = 0.0,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     outputs = model(xi, alpha, mach)
-    kappa = outputs[:, 0:1]
-    q = outputs[:, 1:2]
-
-    mapping_scale = model.get_mapping_scale()
-    y = xi_to_y(xi, mapping_scale)
-
-    order = torch.argsort(y[:, 0])
-    y_sorted = y[order, 0]
-    kappa_sorted = kappa[order, 0]
-    q_sorted = q[order, 0]
-
-    anchor_y = xi_to_y(torch.tensor([[anchor_xi]], dtype=xi.dtype, device=xi.device), mapping_scale)[0, 0]
-    anchor_index = int(torch.argmin(torch.abs(y_sorted - anchor_y)).item())
-
-    ln_amp_sorted = torch.zeros_like(y_sorted)
-    phi_sorted = torch.zeros_like(y_sorted)
-
-    for idx in range(anchor_index + 1, y_sorted.shape[0]):
-        dy = y_sorted[idx] - y_sorted[idx - 1]
-        ln_amp_sorted[idx] = ln_amp_sorted[idx - 1] + 0.5 * (kappa_sorted[idx] + kappa_sorted[idx - 1]) * dy
-        phi_sorted[idx] = phi_sorted[idx - 1] + 0.5 * (q_sorted[idx] + q_sorted[idx - 1]) * dy
-
-    for idx in range(anchor_index - 1, -1, -1):
-        dy = y_sorted[idx + 1] - y_sorted[idx]
-        ln_amp_sorted[idx] = ln_amp_sorted[idx + 1] - 0.5 * (kappa_sorted[idx] + kappa_sorted[idx + 1]) * dy
-        phi_sorted[idx] = phi_sorted[idx + 1] - 0.5 * (q_sorted[idx] + q_sorted[idx + 1]) * dy
-
-    amp_sorted = torch.exp(torch.clamp(ln_amp_sorted, min=-20.0, max=20.0))
-    pr_sorted = amp_sorted * torch.cos(phi_sorted)
-    pi_sorted = amp_sorted * torch.sin(phi_sorted)
-
-    inverse = torch.empty_like(order)
-    inverse[order] = torch.arange(order.shape[0], device=order.device)
-    pr = pr_sorted[inverse].view(-1, 1)
-    pi = pi_sorted[inverse].view(-1, 1)
+    pr, pi, _, _, y = _reconstruct_riccati_pressure_core(
+        outputs,
+        xi,
+        model.get_mapping_scale(),
+        anchor_xi=anchor_xi,
+    )
     return pr, pi, y
+
+
+def reconstruct_pressure_p_y_from_riccati_2d(
+    model,
+    xi: torch.Tensor,
+    alpha: torch.Tensor,
+    mach: torch.Tensor,
+    *,
+    anchor_xi: float = 0.0,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    outputs = model(xi, alpha, mach)
+    return _reconstruct_riccati_pressure_core(
+        outputs,
+        xi,
+        model.get_mapping_scale(),
+        anchor_xi=anchor_xi,
+    )
 
 
 def pressure_ode_residual(
