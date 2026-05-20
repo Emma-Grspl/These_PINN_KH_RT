@@ -15,7 +15,7 @@ from src.data.kh_subsonic_sampling import (
     sample_boundary_points,
     sample_mode_interior_points,
 )
-from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN
+from src.models.kh_subsonic_pinn import KHSubsonicFixedMachPINN, load_fixed_mach_state_dict_compat
 from src.physics.kh_subsonic_residual import (
     base_velocity,
     base_velocity_derivative,
@@ -1068,10 +1068,17 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             raise FileNotFoundError(f"Initial model path not found: {initial_model_path}")
         state_dict = torch.load(initial_model_path, map_location=device)
         if cfg.initial_model_strict:
-            model.load_state_dict(state_dict)
-            print(f"Warm start loaded from {initial_model_path} (strict=True)")
+            load_fixed_mach_state_dict_compat(model, state_dict)
+            print(f"Warm start loaded from {initial_model_path} (strict=True, compat=True)")
         else:
-            incompatible = model.load_state_dict(state_dict, strict=False)
+            remapped_state_dict = dict(state_dict)
+            legacy_mode_keys = [key for key in remapped_state_dict if key.startswith("mode_net.")]
+            has_new_mode_keys = any(key.startswith("mode_nets.0.") for key in remapped_state_dict)
+            if legacy_mode_keys and not has_new_mode_keys:
+                for key in legacy_mode_keys:
+                    suffix = key[len("mode_net.") :]
+                    remapped_state_dict[f"mode_nets.0.{suffix}"] = remapped_state_dict.pop(key)
+            incompatible = model.load_state_dict(remapped_state_dict, strict=False)
             print(
                 "Warm start loaded from "
                 f"{initial_model_path} (strict=False, missing={list(incompatible.missing_keys)}, "
