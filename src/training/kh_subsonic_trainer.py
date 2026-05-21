@@ -8,7 +8,7 @@ import pandas as pd
 import torch
 import torch.optim as optim
 
-from classical_solver.gep.dense_gep_notebook_style import NotebookStyleDenseGEPSolver
+from classical_solver.subsonic.mstab17_subsonic_solver import Mstab17SubsonicSolver
 from src.data.kh_subsonic_sampling import (
     SubsonicReferenceCache,
     sample_alpha_adaptive_batch,
@@ -350,18 +350,8 @@ class PressureModeReferenceCache:
     def get(self, alpha: float) -> tuple[np.ndarray, np.ndarray]:
         alpha_key = round(float(alpha), 8)
         if alpha_key not in self.cache:
-            solver = NotebookStyleDenseGEPSolver(
-                alpha=float(alpha),
-                Mach=self.mach,
-                n_points=self.n_points,
-                mapping_scale=self.mapping_scale,
-                xi_max=self.xi_max,
-            )
-            mode, _, _ = solver.get_selected_mode()
-            if mode is None:
-                raise RuntimeError(f"Aucun mode classique selectionne pour alpha={alpha:.6f}, M={self.mach:.6f}.")
-            p_ref = mode["vector"][2 * solver.n_points : 3 * solver.n_points]
-            self.cache[alpha_key] = anchor_pressure_mode(solver.y, p_ref, anchor_y=0.0)
+            fields = load_shooting_classic_full_mode(float(alpha), self.mach)
+            self.cache[alpha_key] = anchor_pressure_mode(fields["y"], fields["p"], anchor_y=0.0)
         return self.cache[alpha_key]
 
 
@@ -376,23 +366,60 @@ class FullModeReferenceCache:
     def get(self, alpha: float) -> dict[str, np.ndarray]:
         alpha_key = round(float(alpha), 8)
         if alpha_key not in self.cache:
-            solver = NotebookStyleDenseGEPSolver(
-                alpha=float(alpha),
-                Mach=self.mach,
-                n_points=self.n_points,
-                mapping_scale=self.mapping_scale,
-                xi_max=self.xi_max,
-            )
-            mode, _, _ = solver.get_selected_mode()
-            if mode is None:
-                raise RuntimeError(f"Aucun mode classique selectionne pour alpha={alpha:.6f}, M={self.mach:.6f}.")
-            vector = np.asarray(mode["vector"], dtype=np.complex128)
-            u_ref = vector[0 : solver.n_points]
-            v_ref = vector[solver.n_points : 2 * solver.n_points]
-            p_ref = vector[2 * solver.n_points : 3 * solver.n_points]
-            rho_ref = p_ref * (self.mach**2)
-            self.cache[alpha_key] = normalize_classic_full_mode(solver.y, u_ref, v_ref, p_ref, rho_ref)
+            self.cache[alpha_key] = load_shooting_classic_full_mode(float(alpha), self.mach)
         return self.cache[alpha_key]
+
+
+def load_shooting_classic_full_mode(alpha: float, mach: float) -> dict[str, np.ndarray]:
+    solver = Mstab17SubsonicSolver(alpha=float(alpha), Mach=float(mach))
+    result = solver.solve()
+    if not result.success:
+        raise RuntimeError(
+            f"Le shooting subsonique de reference a echoue pour alpha={float(alpha):.6f}, M={float(mach):.6f}."
+        )
+
+    sol_left, sol_right, _ = solver.get_trajectories(result.ci, ln_p_start_right=result.ln_p_start_right)
+    if not sol_left.success or not sol_right.success:
+        raise RuntimeError(
+            f"Les trajectoires de tir de reference ont echoue pour alpha={float(alpha):.6f}, M={float(mach):.6f}."
+        )
+
+    y_left = np.asarray(sol_left.t, dtype=float)
+    y_right = np.asarray(sol_right.t, dtype=float)
+    k_left = np.asarray(sol_left.y[0], dtype=float)
+    q_left = np.asarray(sol_left.y[1], dtype=float)
+    ln_p_left = np.asarray(sol_left.y[2], dtype=float)
+    phi_left = np.asarray(sol_left.y[3], dtype=float)
+    k_right = np.asarray(sol_right.y[0], dtype=float)
+    q_right = np.asarray(sol_right.y[1], dtype=float)
+    ln_p_right = np.asarray(sol_right.y[2], dtype=float)
+    phi_right = np.asarray(sol_right.y[3], dtype=float)
+
+    abs_p_left = np.exp(ln_p_left)
+    abs_p_right = np.exp(ln_p_right)
+    phi_left_0 = solver._interp_component(0.0, sol_left, 3)
+    phi_right_0 = solver._interp_component(0.0, sol_right, 3)
+    phase_shift = phi_left_0 - phi_right_0
+
+    p_left = abs_p_left * np.exp(1j * phi_left)
+    p_right = abs_p_right * np.exp(1j * (phi_right + phase_shift))
+    gamma_left = k_left + 1j * q_left
+    gamma_right = k_right + 1j * q_right
+
+    mask_left = y_left < 0.0
+    y = np.concatenate([y_left[mask_left], y_right[::-1]])
+    p = np.concatenate([p_left[mask_left], p_right[::-1]])
+    gamma = np.concatenate([gamma_left[mask_left], gamma_right[::-1]])
+
+    p_y = gamma * p
+    c = -1j * float(result.ci)
+    u_bar = np.tanh(y)
+    du_bar = 1.0 / np.cosh(y) ** 2
+    i_alpha = 1j * float(alpha)
+    v = -p_y / (i_alpha * (u_bar - c))
+    u = -(du_bar * v + i_alpha * p) / (i_alpha * (u_bar - c))
+    rho = p * (float(mach) ** 2)
+    return normalize_classic_full_mode(y, u, v, p, rho)
 
 
 def reconstruct_predicted_pressure_mode(
