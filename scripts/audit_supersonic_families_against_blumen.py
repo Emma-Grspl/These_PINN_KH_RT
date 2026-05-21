@@ -12,9 +12,24 @@ import pandas as pd
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-DEFAULT_OUTPUT_DIR = ROOT_DIR / "assets" / "blumen_gep"
-DEFAULT_BLUMEN_CR_POINTS = ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_cr_digitized_points.csv"
-DEFAULT_BLUMEN_CI_POINTS = ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_ci_digitized_points.csv"
+
+
+def _prefer_existing_path(*candidates: Path) -> Path:
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
+
+
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "assets" / "classic_supersonic" / "diagnostics"
+DEFAULT_BLUMEN_CR_POINTS = _prefer_existing_path(
+    ROOT_DIR / "assets" / "classic_supersonic" / "blumen_reference" / "supersonic_cr_digitized_points.csv",
+    ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_cr_digitized_points.csv",
+)
+DEFAULT_BLUMEN_CI_POINTS = _prefer_existing_path(
+    ROOT_DIR / "assets" / "classic_supersonic" / "blumen_reference" / "supersonic_ci_digitized_points.csv",
+    ROOT_DIR / "assets" / "classique_supersonique" / "blumen_reference" / "supersonic_ci_digitized_points.csv",
+)
 
 
 def numeric_level(label: str) -> float | None:
