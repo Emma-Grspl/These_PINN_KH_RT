@@ -40,10 +40,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-branch-lr", type=float, default=None)
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--num-alpha-ci", type=int, default=41)
-    parser.add_argument("--num-alpha-modes", type=int, default=21)
+    parser.add_argument("--num-alpha-modes", type=int, default=11)
     parser.add_argument("--n-y-pinn", type=int, default=1001)
     parser.add_argument("--y-max", type=float, default=10.0)
-    parser.add_argument("--y-common", type=int, default=801)
+    parser.add_argument("--y-common", type=int, default=601)
     parser.add_argument("--overlay-alphas", type=float, nargs="+", default=[0.05, 0.2, 0.35, 0.5, 0.65, 0.8])
     parser.add_argument("--low-alpha-threshold", type=float, default=0.5)
     parser.add_argument("--low-alpha-weight", type=float, default=6.0)
@@ -56,6 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-kappa-weight", type=float, default=0.5)
     parser.add_argument("--center-peak-weight", type=float, default=0.5)
     parser.add_argument("--anchor-alphas", type=float, nargs="*", default=[0.05, 0.10, 0.20, 0.30, 0.40, 0.50])
+    parser.add_argument("--q-supervision-alphas", type=float, nargs="*", default=None)
     return parser
 
 
@@ -94,6 +95,10 @@ def load_warmstart_checkpoint(args: argparse.Namespace) -> Path:
 
 
 def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: Path) -> KHSubsonicTrainingConfig:
+    q_supervision_alphas = args.q_supervision_alphas
+    if q_supervision_alphas is None:
+        q_supervision_alphas = args.anchor_alphas
+
     return KHSubsonicTrainingConfig(
         mach=float(warm_config["mach"]),
         alpha_min=float(warm_config["alpha_min"]),
@@ -118,11 +123,11 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
         n_alpha_supervision=32,
         n_anchor_alpha=24,
         n_norm_interior=256,
-        n_reference_alpha=81,
-        n_audit_alpha=81,
+        n_reference_alpha=41,
+        n_audit_alpha=41,
         n_mode_audit_alpha=int(args.num_alpha_modes),
-        n_mode_audit_y=1201,
-        audit_every=100,
+        n_mode_audit_y=801,
+        audit_every=250,
         checkpoint_every=500,
         enable_classic_ci_supervision=False,
         enable_classic_mode_audit=True,
@@ -175,7 +180,8 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
         w_q_supervision=float(args.q_supervision_weight),
         q_supervision_n_xi=129,
         q_supervision_every=10,
-        q_supervision_alpha_count=12,
+        q_supervision_alpha_count=len(q_supervision_alphas),
+        q_supervision_alphas=tuple(float(alpha) for alpha in q_supervision_alphas),
         w_riccati_center_kappa=float(args.center_kappa_weight),
         w_riccati_center_peak=float(args.center_peak_weight),
         w_riccati_boundary_band_kappa=float(args.boundary_kappa_weight),

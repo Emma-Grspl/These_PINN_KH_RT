@@ -168,6 +168,7 @@ class KHSubsonicTrainingConfig:
     q_supervision_n_xi: int = 97
     q_supervision_every: int = 20
     q_supervision_alpha_count: int = 6
+    q_supervision_alphas: tuple[float, ...] = ()
     w_riccati_center_kappa: float = 0.0
     w_riccati_center_peak: float = 0.0
     w_riccati_boundary_band_kappa: float = 0.0
@@ -789,6 +790,9 @@ def build_q_supervision_alphas(
     *,
     device: torch.device,
 ) -> torch.Tensor:
+    if len(cfg.q_supervision_alphas):
+        return torch.tensor(cfg.q_supervision_alphas, dtype=alpha_ref.dtype, device=device).view(-1, 1)
+
     count = min(int(cfg.q_supervision_alpha_count), int(alpha_ref.shape[0]))
     if count <= 0:
         return alpha_ref[:0]
