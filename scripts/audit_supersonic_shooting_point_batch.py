@@ -70,6 +70,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.set_defaults(include_generic_seeds=True)
     parser.add_argument("--visible-threshold-ratio", type=float, default=0.02)
     parser.add_argument("--visible-min-half-width", type=float, default=8.0)
+    parser.add_argument("--edge-amp-threshold", type=float, default=0.05)
     parser.add_argument("--output-stem", type=str, required=True)
     parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
     parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
@@ -125,6 +126,7 @@ def success_label(spectral_success: bool, mode_success: bool) -> str:
 def selection_metric(
     *,
     target_available: bool,
+    ci_available: bool,
     shooting_cr: float,
     shooting_ci: float,
     blumen_cr: float,
@@ -150,19 +152,25 @@ def selection_metric(
             continuity_weight=float(continuity_weight),
         )
         return float(score), "distance_to_blumen"
+    if ci_available:
+        penalty = 0.05 * float(stage1_mismatch) + 0.001 * float(stage2_mismatch)
+        bonus = 0.02 if bool(spectral_success) else 0.0
+        bonus += 0.05 if bool(mode_success) else 0.0
+        score = abs(float(shooting_ci) - float(blumen_ci)) - bonus + penalty
+        return float(score), "distance_to_blumen_ci_only"
     penalty = 0.05 * float(stage1_mismatch) + 0.001 * float(stage2_mismatch)
     bonus = 0.02 if bool(spectral_success) else 0.0
     bonus += 0.05 if bool(mode_success) else 0.0
     return float(-shooting_ci - bonus + penalty), "max_ci_fallback"
 
 
-def boundary_amplitude_metrics(y: np.ndarray, p: np.ndarray) -> dict[str, float]:
-    p_abs = np.abs(p)
-    peak = max(float(np.max(p_abs)), 1e-12)
+def boundary_amplitude_metrics(field: np.ndarray, *, prefix: str) -> dict[str, float]:
+    field_abs = np.abs(field)
+    peak = max(float(np.max(field_abs)), 1e-12)
     return {
-        "left_boundary_amp_fraction": float(p_abs[0] / peak),
-        "right_boundary_amp_fraction": float(p_abs[-1] / peak),
-        "edge_amp_fraction_max": float(max(p_abs[0], p_abs[-1]) / peak),
+        f"{prefix}_left_boundary_amp_fraction": float(field_abs[0] / peak),
+        f"{prefix}_right_boundary_amp_fraction": float(field_abs[-1] / peak),
+        f"{prefix}_edge_amp_fraction_max": float(max(field_abs[0], field_abs[-1]) / peak),
     }
 
 
@@ -186,6 +194,8 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
     target = target_df.iloc[0]
     blumen_cr = float(target["blumen_cr"])
     blumen_ci = float(target["blumen_ci"])
+    ci_available = bool(np.isfinite(blumen_ci))
+    cr_available = bool(np.isfinite(blumen_cr))
     target_available = bool(np.isfinite(blumen_cr) and np.isfinite(blumen_ci))
 
     seeds: list[tuple[str, float, float]] = []
@@ -231,6 +241,7 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                     )
                     metric_value, metric_name = selection_metric(
                         target_available=bool(target_available),
+                        ci_available=bool(ci_available),
                         shooting_cr=float(result.cr),
                         shooting_ci=float(result.ci),
                         blumen_cr=float(blumen_cr),
@@ -249,6 +260,8 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                             "Mach": float(mach),
                             "blumen_cr": float(blumen_cr),
                             "blumen_ci": float(blumen_ci),
+                            "blumen_cr_available": bool(cr_available),
+                            "blumen_ci_available": bool(ci_available),
                             "blumen_target_available": bool(target_available),
                             "seed_name": str(seed_name),
                             "seed_cr_center": float(cr_center),
@@ -261,10 +274,10 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                             "shooting_cr": float(result.cr),
                             "shooting_ci": float(result.ci),
                             "shooting_omega_i": float(result.omega_i),
-                            "err_cr_abs": abs(float(result.cr) - blumen_cr) if target_available else np.nan,
-                            "err_ci_abs": abs(float(result.ci) - blumen_ci) if target_available else np.nan,
+                            "err_cr_abs": abs(float(result.cr) - blumen_cr) if cr_available else np.nan,
+                            "err_ci_abs": abs(float(result.ci) - blumen_ci) if ci_available else np.nan,
                             "err_ci_rel": (
-                                abs(float(result.ci) - blumen_ci) / max(abs(blumen_ci), 1e-12) if target_available else np.nan
+                                abs(float(result.ci) - blumen_ci) / max(abs(blumen_ci), 1e-12) if ci_available else np.nan
                             ),
                             "stage1_mismatch": float(result.stage1_mismatch),
                             "stage2_mismatch": float(result.stage2_mismatch),
@@ -303,15 +316,40 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
         )
         y_fields = np.asarray(fields["y"], dtype=float)
         p_fields = np.asarray(fields["p"], dtype=np.complex128)
+        rho_fields = np.asarray(fields["rho"], dtype=np.complex128)
+        u_fields = np.asarray(fields["u"], dtype=np.complex128)
+        v_fields = np.asarray(fields["v"], dtype=np.complex128)
         diag = extended_profile_diagnostics(y_fields, p_fields)
-        diag.update(boundary_amplitude_metrics(y_fields, p_fields))
+        p_boundary = boundary_amplitude_metrics(p_fields, prefix="p")
+        rho_boundary = boundary_amplitude_metrics(rho_fields, prefix="rho")
+        u_boundary = boundary_amplitude_metrics(u_fields, prefix="u")
+        v_boundary = boundary_amplitude_metrics(v_fields, prefix="v")
+        diag.update(p_boundary)
+        diag.update(rho_boundary)
+        diag.update(u_boundary)
+        diag.update(v_boundary)
         diag.update(infer_regimes(mach=float(mach), cr=float(best["shooting_cr"]), ci=float(best["shooting_ci"])))
+        diag["edge_amp_fraction_max"] = float(p_boundary["p_edge_amp_fraction_max"])
+        diag["left_boundary_amp_fraction"] = float(p_boundary["p_left_boundary_amp_fraction"])
+        diag["right_boundary_amp_fraction"] = float(p_boundary["p_right_boundary_amp_fraction"])
+        diag["max_field_edge_amp_fraction"] = float(
+            max(
+                p_boundary["p_edge_amp_fraction_max"],
+                rho_boundary["rho_edge_amp_fraction_max"],
+                u_boundary["u_edge_amp_fraction_max"],
+                v_boundary["v_edge_amp_fraction_max"],
+            )
+        )
+        diag["box_truncation_suspect_p"] = bool(float(p_boundary["p_edge_amp_fraction_max"]) > float(cfg["edge_amp_threshold"]))
+        diag["box_truncation_suspect_any_field"] = bool(float(diag["max_field_edge_amp_fraction"]) > float(cfg["edge_amp_threshold"]))
 
         summary_row = {
             "alpha": float(alpha),
             "Mach": float(mach),
             "blumen_cr": float(blumen_cr),
             "blumen_ci": float(blumen_ci),
+            "blumen_cr_available": bool(cr_available),
+            "blumen_ci_available": bool(ci_available),
             "blumen_target_available": bool(target_available),
             "n_seeds": int(len(seeds)),
             "n_candidates": int(len(candidate_rows)),
@@ -322,9 +360,9 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "best_shooting_cr": float(best["shooting_cr"]),
             "best_shooting_ci": float(best["shooting_ci"]),
             "best_shooting_omega_i": float(best["shooting_omega_i"]),
-            "best_err_cr_abs": float(best["err_cr_abs"]) if target_available else np.nan,
-            "best_err_ci_abs": float(best["err_ci_abs"]) if target_available else np.nan,
-            "best_err_ci_rel": float(best["err_ci_rel"]) if target_available else np.nan,
+            "best_err_cr_abs": float(best["err_cr_abs"]) if cr_available else np.nan,
+            "best_err_ci_abs": float(best["err_ci_abs"]) if ci_available else np.nan,
+            "best_err_ci_rel": float(best["err_ci_rel"]) if ci_available else np.nan,
             "best_stage1_mismatch": float(best["stage1_mismatch"]),
             "best_stage2_mismatch": float(best["stage2_mismatch"]),
             "best_ln_p_start_right": float(best["ln_p_start_right"]),
@@ -370,6 +408,8 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "Mach": float(mach),
             "blumen_cr": float(blumen_cr),
             "blumen_ci": float(blumen_ci),
+            "blumen_cr_available": bool(cr_available),
+            "blumen_ci_available": bool(ci_available),
             "blumen_target_available": bool(target_available),
             "n_seeds": int(len(seeds)),
             "n_candidates": int(len(candidate_rows)),
@@ -408,6 +448,21 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "left_boundary_amp_fraction": np.nan,
             "right_boundary_amp_fraction": np.nan,
             "edge_amp_fraction_max": np.nan,
+            "p_left_boundary_amp_fraction": np.nan,
+            "p_right_boundary_amp_fraction": np.nan,
+            "p_edge_amp_fraction_max": np.nan,
+            "rho_left_boundary_amp_fraction": np.nan,
+            "rho_right_boundary_amp_fraction": np.nan,
+            "rho_edge_amp_fraction_max": np.nan,
+            "u_left_boundary_amp_fraction": np.nan,
+            "u_right_boundary_amp_fraction": np.nan,
+            "u_edge_amp_fraction_max": np.nan,
+            "v_left_boundary_amp_fraction": np.nan,
+            "v_right_boundary_amp_fraction": np.nan,
+            "v_edge_amp_fraction_max": np.nan,
+            "max_field_edge_amp_fraction": np.nan,
+            "box_truncation_suspect_p": False,
+            "box_truncation_suspect_any_field": False,
             "left_relative_mach": np.nan,
             "left_relative_regime": "",
             "right_relative_mach": np.nan,
@@ -462,8 +517,8 @@ def plot_diagnostics(summary_df: pd.DataFrame, output_path: Path) -> None:
     axes[0, 0].set_title("stage1 mismatch")
     axes[0, 1].scatter(summary_df["Mach"], summary_df["best_stage2_mismatch"], c=colors, s=65, edgecolors="black", linewidths=0.4)
     axes[0, 1].set_title("stage2 mismatch")
-    axes[1, 0].scatter(summary_df["Mach"], summary_df["edge_amp_fraction_max"], c=colors, s=65, edgecolors="black", linewidths=0.4)
-    axes[1, 0].set_title("max boundary amplitude fraction")
+    axes[1, 0].scatter(summary_df["Mach"], summary_df["max_field_edge_amp_fraction"], c=colors, s=65, edgecolors="black", linewidths=0.4)
+    axes[1, 0].set_title("max boundary amplitude fraction across fields")
     axes[1, 1].scatter(summary_df["Mach"], summary_df["center8_mass_fraction"], c=colors, s=65, edgecolors="black", linewidths=0.4)
     axes[1, 1].set_title("center8 mass fraction")
     for ax in axes.ravel():
@@ -557,6 +612,7 @@ def main() -> None:
         "cr_weight": float(args.cr_weight),
         "continuity_weight": float(args.continuity_weight),
         "include_generic_seeds": bool(args.include_generic_seeds),
+        "edge_amp_threshold": float(args.edge_amp_threshold),
         "cr_points": str(args.cr_points),
         "ci_points": str(args.ci_points),
     }
@@ -586,6 +642,8 @@ def main() -> None:
                 f"status={summary_row['best_status']} "
                 f"ci={float(summary_row['best_shooting_ci']) if np.isfinite(summary_row['best_shooting_ci']) else np.nan:.5f} "
                 f"cr={float(summary_row['best_shooting_cr']) if np.isfinite(summary_row['best_shooting_cr']) else np.nan:.5f} "
+                f"err_ci={float(summary_row['best_err_ci_abs']) if np.isfinite(summary_row['best_err_ci_abs']) else np.nan:.3e} "
+                f"box_any={bool(summary_row['box_truncation_suspect_any_field'])} "
                 f"stage1={float(summary_row['best_stage1_mismatch']) if np.isfinite(summary_row['best_stage1_mismatch']) else np.nan:.3e} "
                 f"stage2={float(summary_row['best_stage2_mismatch']) if np.isfinite(summary_row['best_stage2_mismatch']) else np.nan:.3e}"
             )
