@@ -1,0 +1,639 @@
+from __future__ import annotations
+
+import argparse
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from pathlib import Path
+import sys
+
+import matplotlib
+
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_pdf import PdfPages
+import numpy as np
+import pandas as pd
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
+    DEFAULT_BLUMEN_CI_POINTS,
+    DEFAULT_BLUMEN_CR_POINTS,
+    build_blumen_targets,
+    load_digitized_long,
+)
+from scripts.audit_supersonic_shooting_ci_map import (  # noqa: E402
+    build_seed_list,
+    ci_primary_score,
+    classify_relative_regime,
+    extended_profile_diagnostics,
+)
+from scripts.audit_supersonic_shooting_visual_validation import (  # noqa: E402
+    compute_visible_xlim,
+    reconstruct_shooting_fields,
+)
+from scripts.track_supersonic_shooting_multistart import multistart_single_box  # noqa: E402
+
+
+DEFAULT_OUTPUT_DIR = ROOT_DIR / "assets" / "classic_supersonic" / "shooting"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Audit pointwise supersonique au shooting sur plusieurs couples alpha:Mach, "
+            "avec parallelisme CPU et metriques de succes."
+        )
+    )
+    parser.add_argument("--points", type=str, nargs="+", required=True, help="Liste de couples alpha:Mach.")
+    parser.add_argument("--workers", type=int, default=1)
+    parser.add_argument("--match-y", type=float, default=1.0)
+    parser.add_argument("--use-mapping", action="store_true", default=True)
+    parser.add_argument("--mapping-scale", type=float, default=5.0)
+    parser.add_argument("--min-y-limit", type=float, default=10.0)
+    parser.add_argument("--max-y-limit", type=float, default=500.0)
+    parser.add_argument("--y-limit-factor", type=float, default=6.0)
+    parser.add_argument("--amp-lower-bound", type=float, default=-30.0)
+    parser.add_argument("--amp-upper-bound", type=float, default=5.0)
+    parser.add_argument("--cr-half-windows", type=float, nargs="+", default=[0.015, 0.03, 0.06, 0.10])
+    parser.add_argument("--ci-half-windows", type=float, nargs="+", default=[0.008, 0.015, 0.03])
+    parser.add_argument("--retry-growth", type=float, default=1.75)
+    parser.add_argument("--max-retries", type=int, default=3)
+    parser.add_argument("--max-iter", type=int, default=10)
+    parser.add_argument("--grid-size", type=int, default=4)
+    parser.add_argument("--ci-weight", type=float, default=4.0)
+    parser.add_argument("--cr-weight", type=float, default=0.35)
+    parser.add_argument("--continuity-weight", type=float, default=0.20)
+    parser.add_argument("--no-generic-seeds", action="store_false", dest="include_generic_seeds")
+    parser.set_defaults(include_generic_seeds=True)
+    parser.add_argument("--visible-threshold-ratio", type=float, default=0.02)
+    parser.add_argument("--visible-min-half-width", type=float, default=8.0)
+    parser.add_argument("--output-stem", type=str, required=True)
+    parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
+    parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
+    return parser
+
+
+def parse_points(values: list[str]) -> list[tuple[float, float]]:
+    out: list[tuple[float, float]] = []
+    seen: set[tuple[float, float]] = set()
+    for item in values:
+        alpha_raw, mach_raw = item.split(":")
+        key = (round(float(alpha_raw), 8), round(float(mach_raw), 8))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((float(alpha_raw), float(mach_raw)))
+    return out
+
+
+def generic_seed_list() -> list[tuple[str, float, float]]:
+    return [
+        ("generic_00", 0.00, 0.015),
+        ("generic_01", 0.05, 0.025),
+        ("generic_02", 0.10, 0.040),
+        ("generic_03", 0.18, 0.055),
+        ("generic_04", 0.26, 0.070),
+        ("generic_05", 0.34, 0.085),
+    ]
+
+
+def dedup_seeds(seeds: list[tuple[str, float, float]]) -> list[tuple[str, float, float]]:
+    seen: set[tuple[float, float]] = set()
+    out: list[tuple[str, float, float]] = []
+    for seed_name, cr_center, ci_center in seeds:
+        key = (round(float(cr_center), 6), round(float(ci_center), 6))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append((seed_name, float(cr_center), float(ci_center)))
+    return out
+
+
+def success_label(spectral_success: bool, mode_success: bool) -> str:
+    if spectral_success and mode_success:
+        return "validated"
+    if spectral_success and not mode_success:
+        return "spectral_only"
+    if mode_success and not spectral_success:
+        return "mode_only"
+    return "failed"
+
+
+def selection_metric(
+    *,
+    target_available: bool,
+    shooting_cr: float,
+    shooting_ci: float,
+    blumen_cr: float,
+    blumen_ci: float,
+    spectral_success: bool,
+    mode_success: bool,
+    stage1_mismatch: float,
+    stage2_mismatch: float,
+    ci_weight: float,
+    cr_weight: float,
+    continuity_weight: float,
+) -> tuple[float, str]:
+    if target_available:
+        score = ci_primary_score(
+            shooting_cr=float(shooting_cr),
+            shooting_ci=float(shooting_ci),
+            blumen_cr=float(blumen_cr),
+            blumen_ci=float(blumen_ci),
+            previous_mach=None,
+            previous_alpha=None,
+            ci_weight=float(ci_weight),
+            cr_weight=float(cr_weight),
+            continuity_weight=float(continuity_weight),
+        )
+        return float(score), "distance_to_blumen"
+    penalty = 0.05 * float(stage1_mismatch) + 0.001 * float(stage2_mismatch)
+    bonus = 0.02 if bool(spectral_success) else 0.0
+    bonus += 0.05 if bool(mode_success) else 0.0
+    return float(-shooting_ci - bonus + penalty), "max_ci_fallback"
+
+
+def boundary_amplitude_metrics(y: np.ndarray, p: np.ndarray) -> dict[str, float]:
+    p_abs = np.abs(p)
+    peak = max(float(np.max(p_abs)), 1e-12)
+    return {
+        "left_boundary_amp_fraction": float(p_abs[0] / peak),
+        "right_boundary_amp_fraction": float(p_abs[-1] / peak),
+        "edge_amp_fraction_max": float(max(p_abs[0], p_abs[-1]) / peak),
+    }
+
+
+def infer_regimes(*, mach: float, cr: float, ci: float) -> dict[str, object]:
+    c = complex(float(cr), float(ci))
+    left_rel_mach, left_regime = classify_relative_regime(float(mach), -1.0, c)
+    right_rel_mach, right_regime = classify_relative_regime(float(mach), 1.0, c)
+    return {
+        "left_relative_mach": float(left_rel_mach),
+        "left_relative_regime": str(left_regime),
+        "right_relative_mach": float(right_rel_mach),
+        "right_relative_regime": str(right_regime),
+    }
+
+
+def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
+    alpha, mach = point
+    cr_points = load_digitized_long(Path(str(cfg["cr_points"])))
+    ci_points = load_digitized_long(Path(str(cfg["ci_points"])))
+    target_df = build_blumen_targets([float(mach)], float(alpha), cr_points, ci_points)
+    target = target_df.iloc[0]
+    blumen_cr = float(target["blumen_cr"])
+    blumen_ci = float(target["blumen_ci"])
+    target_available = bool(np.isfinite(blumen_cr) and np.isfinite(blumen_ci))
+
+    seeds: list[tuple[str, float, float]] = []
+    if target_available:
+        seeds.extend(
+            build_seed_list(
+                blumen_cr=float(blumen_cr),
+                blumen_ci=float(blumen_ci),
+                previous_mach=None,
+                previous_alpha=None,
+            )
+        )
+    if bool(cfg["include_generic_seeds"]):
+        seeds.extend(generic_seed_list())
+    seeds = dedup_seeds(seeds)
+    if not seeds:
+        raise RuntimeError(f"Aucune seed disponible pour alpha={alpha:.3f}, Mach={mach:.3f}.")
+
+    candidate_rows: list[dict[str, object]] = []
+    try:
+        for seed_name, cr_center, ci_center in seeds:
+            for cr_half in cfg["cr_half_windows"]:
+                for ci_half in cfg["ci_half_windows"]:
+                    solver, result, retry_idx, used_cr_half, used_ci_half = multistart_single_box(
+                        alpha=float(alpha),
+                        mach=float(mach),
+                        match_y=float(cfg["match_y"]),
+                        use_mapping=bool(cfg["use_mapping"]),
+                        mapping_scale=float(cfg["mapping_scale"]),
+                        min_y_limit=float(cfg["min_y_limit"]),
+                        max_y_limit=float(cfg["max_y_limit"]),
+                        y_limit_factor=float(cfg["y_limit_factor"]),
+                        amp_lower_bound=float(cfg["amp_lower_bound"]),
+                        amp_upper_bound=float(cfg["amp_upper_bound"]),
+                        cr_center=float(cr_center),
+                        ci_center=float(ci_center),
+                        cr_half_window=float(cr_half),
+                        ci_half_window=float(ci_half),
+                        retry_growth=float(cfg["retry_growth"]),
+                        max_retries=int(cfg["max_retries"]),
+                        max_iter=int(cfg["max_iter"]),
+                        grid_size=int(cfg["grid_size"]),
+                    )
+                    metric_value, metric_name = selection_metric(
+                        target_available=bool(target_available),
+                        shooting_cr=float(result.cr),
+                        shooting_ci=float(result.ci),
+                        blumen_cr=float(blumen_cr),
+                        blumen_ci=float(blumen_ci),
+                        spectral_success=bool(result.spectral_success),
+                        mode_success=bool(result.mode_success),
+                        stage1_mismatch=float(result.stage1_mismatch),
+                        stage2_mismatch=float(result.stage2_mismatch),
+                        ci_weight=float(cfg["ci_weight"]),
+                        cr_weight=float(cfg["cr_weight"]),
+                        continuity_weight=float(cfg["continuity_weight"]),
+                    )
+                    candidate_rows.append(
+                        {
+                            "alpha": float(alpha),
+                            "Mach": float(mach),
+                            "blumen_cr": float(blumen_cr),
+                            "blumen_ci": float(blumen_ci),
+                            "blumen_target_available": bool(target_available),
+                            "seed_name": str(seed_name),
+                            "seed_cr_center": float(cr_center),
+                            "seed_ci_center": float(ci_center),
+                            "requested_cr_half_window": float(cr_half),
+                            "requested_ci_half_window": float(ci_half),
+                            "used_cr_half_window": float(used_cr_half),
+                            "used_ci_half_window": float(used_ci_half),
+                            "retry_index": int(retry_idx),
+                            "shooting_cr": float(result.cr),
+                            "shooting_ci": float(result.ci),
+                            "shooting_omega_i": float(result.omega_i),
+                            "err_cr_abs": abs(float(result.cr) - blumen_cr) if target_available else np.nan,
+                            "err_ci_abs": abs(float(result.ci) - blumen_ci) if target_available else np.nan,
+                            "err_ci_rel": (
+                                abs(float(result.ci) - blumen_ci) / max(abs(blumen_ci), 1e-12) if target_available else np.nan
+                            ),
+                            "stage1_mismatch": float(result.stage1_mismatch),
+                            "stage2_mismatch": float(result.stage2_mismatch),
+                            "ln_p_start_right": float(result.ln_p_start_right),
+                            "spectral_success": bool(result.spectral_success),
+                            "mode_success": bool(result.mode_success),
+                            "success": bool(result.success),
+                            "status": success_label(bool(result.spectral_success), bool(result.mode_success)),
+                            "selection_metric": float(metric_value),
+                            "selection_metric_name": str(metric_name),
+                            "y_limit": float(result.y_limit),
+                        }
+                    )
+
+        ranked = sorted(
+            candidate_rows,
+            key=lambda row: (
+                0 if bool(row["success"]) else 1,
+                float(row["selection_metric"]),
+                float(row["stage1_mismatch"] + row["stage2_mismatch"]),
+            ),
+        )
+        best = ranked[0]
+        fields = reconstruct_shooting_fields(
+            alpha=float(alpha),
+            mach=float(mach),
+            cr=float(best["shooting_cr"]),
+            ci=float(best["shooting_ci"]),
+            ln_p_start_right=float(best["ln_p_start_right"]),
+            match_y=float(cfg["match_y"]),
+            use_mapping=bool(cfg["use_mapping"]),
+            mapping_scale=float(cfg["mapping_scale"]),
+            min_y_limit=float(cfg["min_y_limit"]),
+            max_y_limit=float(cfg["max_y_limit"]),
+            y_limit_factor=float(cfg["y_limit_factor"]),
+        )
+        y_fields = np.asarray(fields["y"], dtype=float)
+        p_fields = np.asarray(fields["p"], dtype=np.complex128)
+        diag = extended_profile_diagnostics(y_fields, p_fields)
+        diag.update(boundary_amplitude_metrics(y_fields, p_fields))
+        diag.update(infer_regimes(mach=float(mach), cr=float(best["shooting_cr"]), ci=float(best["shooting_ci"])))
+
+        summary_row = {
+            "alpha": float(alpha),
+            "Mach": float(mach),
+            "blumen_cr": float(blumen_cr),
+            "blumen_ci": float(blumen_ci),
+            "blumen_target_available": bool(target_available),
+            "n_seeds": int(len(seeds)),
+            "n_candidates": int(len(candidate_rows)),
+            "n_success_candidates": int(sum(bool(row["success"]) for row in candidate_rows)),
+            "n_spectral_success_candidates": int(sum(bool(row["spectral_success"]) for row in candidate_rows)),
+            "n_mode_success_candidates": int(sum(bool(row["mode_success"]) for row in candidate_rows)),
+            "best_seed_name": str(best["seed_name"]),
+            "best_shooting_cr": float(best["shooting_cr"]),
+            "best_shooting_ci": float(best["shooting_ci"]),
+            "best_shooting_omega_i": float(best["shooting_omega_i"]),
+            "best_err_cr_abs": float(best["err_cr_abs"]) if target_available else np.nan,
+            "best_err_ci_abs": float(best["err_ci_abs"]) if target_available else np.nan,
+            "best_err_ci_rel": float(best["err_ci_rel"]) if target_available else np.nan,
+            "best_stage1_mismatch": float(best["stage1_mismatch"]),
+            "best_stage2_mismatch": float(best["stage2_mismatch"]),
+            "best_ln_p_start_right": float(best["ln_p_start_right"]),
+            "best_spectral_success": bool(best["spectral_success"]),
+            "best_mode_success": bool(best["mode_success"]),
+            "best_success": bool(best["success"]),
+            "best_status": str(best["status"]),
+            "best_selection_metric": float(best["selection_metric"]),
+            "best_selection_metric_name": str(best["selection_metric_name"]),
+            "best_retry_index": int(best["retry_index"]),
+            "best_used_cr_half_window": float(best["used_cr_half_window"]),
+            "best_used_ci_half_window": float(best["used_ci_half_window"]),
+            "best_y_limit": float(best["y_limit"]),
+            **diag,
+            "exception": "",
+        }
+
+        field_rows: list[dict[str, object]] = []
+        for y_value, rho_value, u_value, v_value, p_value in zip(
+            fields["y"], fields["rho"], fields["u"], fields["v"], fields["p"]
+        ):
+            field_rows.append(
+                {
+                    "alpha": float(alpha),
+                    "Mach": float(mach),
+                    "best_status": str(best["status"]),
+                    "y": float(y_value),
+                    "rho_real": float(np.real(rho_value)),
+                    "rho_imag": float(np.imag(rho_value)),
+                    "u_real": float(np.real(u_value)),
+                    "u_imag": float(np.imag(u_value)),
+                    "v_real": float(np.real(v_value)),
+                    "v_imag": float(np.imag(v_value)),
+                    "p_real": float(np.real(p_value)),
+                    "p_imag": float(np.imag(p_value)),
+                }
+            )
+
+        return summary_row, candidate_rows, field_rows
+    except Exception as exc:  # noqa: BLE001
+        summary_row = {
+            "alpha": float(alpha),
+            "Mach": float(mach),
+            "blumen_cr": float(blumen_cr),
+            "blumen_ci": float(blumen_ci),
+            "blumen_target_available": bool(target_available),
+            "n_seeds": int(len(seeds)),
+            "n_candidates": int(len(candidate_rows)),
+            "n_success_candidates": int(sum(bool(row["success"]) for row in candidate_rows)),
+            "n_spectral_success_candidates": int(sum(bool(row["spectral_success"]) for row in candidate_rows)),
+            "n_mode_success_candidates": int(sum(bool(row["mode_success"]) for row in candidate_rows)),
+            "best_seed_name": "",
+            "best_shooting_cr": np.nan,
+            "best_shooting_ci": np.nan,
+            "best_shooting_omega_i": np.nan,
+            "best_err_cr_abs": np.nan,
+            "best_err_ci_abs": np.nan,
+            "best_err_ci_rel": np.nan,
+            "best_stage1_mismatch": np.nan,
+            "best_stage2_mismatch": np.nan,
+            "best_ln_p_start_right": np.nan,
+            "best_spectral_success": False,
+            "best_mode_success": False,
+            "best_success": False,
+            "best_status": "exception",
+            "best_selection_metric": np.nan,
+            "best_selection_metric_name": "",
+            "best_retry_index": np.nan,
+            "best_used_cr_half_window": np.nan,
+            "best_used_ci_half_window": np.nan,
+            "best_y_limit": np.nan,
+            "centroid_abs_y": np.nan,
+            "spread_abs_y": np.nan,
+            "peak_y": np.nan,
+            "centroid_abs_y_center8": np.nan,
+            "spread_abs_y_center8": np.nan,
+            "peak_y_center8": np.nan,
+            "center8_mass_fraction": np.nan,
+            "left_mass_fraction": np.nan,
+            "right_mass_fraction": np.nan,
+            "left_boundary_amp_fraction": np.nan,
+            "right_boundary_amp_fraction": np.nan,
+            "edge_amp_fraction_max": np.nan,
+            "left_relative_mach": np.nan,
+            "left_relative_regime": "",
+            "right_relative_mach": np.nan,
+            "right_relative_regime": "",
+            "exception": repr(exc),
+        }
+        return summary_row, candidate_rows, []
+
+
+def plot_status_map(summary_df: pd.DataFrame, output_path: Path) -> None:
+    color_map = {
+        "validated": "#15803D",
+        "spectral_only": "#D97706",
+        "mode_only": "#7C3AED",
+        "failed": "#DC2626",
+        "exception": "#111827",
+    }
+    fig, ax = plt.subplots(figsize=(8.0, 5.5))
+    for status, sub in summary_df.groupby("best_status", sort=False):
+        ax.scatter(
+            sub["Mach"],
+            sub["alpha"],
+            s=70,
+            label=status,
+            color=color_map.get(str(status), "#4B5563"),
+            alpha=0.9,
+            edgecolors="black",
+            linewidths=0.5,
+        )
+    ax.set_xlabel(r"Mach $M$")
+    ax.set_ylabel(r"$\alpha$")
+    ax.set_title("Supersonic shooting point audit: status map")
+    ax.grid(True, linestyle=":", alpha=0.25)
+    ax.legend(frameon=True)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_diagnostics(summary_df: pd.DataFrame, output_path: Path) -> None:
+    fig, axes = plt.subplots(2, 2, figsize=(12, 8), squeeze=False)
+    status_colors = {
+        "validated": "#15803D",
+        "spectral_only": "#D97706",
+        "mode_only": "#7C3AED",
+        "failed": "#DC2626",
+        "exception": "#111827",
+    }
+    colors = [status_colors.get(str(status), "#4B5563") for status in summary_df["best_status"]]
+    axes[0, 0].scatter(summary_df["Mach"], summary_df["best_stage1_mismatch"], c=colors, s=65, edgecolors="black", linewidths=0.4)
+    axes[0, 0].set_title("stage1 mismatch")
+    axes[0, 1].scatter(summary_df["Mach"], summary_df["best_stage2_mismatch"], c=colors, s=65, edgecolors="black", linewidths=0.4)
+    axes[0, 1].set_title("stage2 mismatch")
+    axes[1, 0].scatter(summary_df["Mach"], summary_df["edge_amp_fraction_max"], c=colors, s=65, edgecolors="black", linewidths=0.4)
+    axes[1, 0].set_title("max boundary amplitude fraction")
+    axes[1, 1].scatter(summary_df["Mach"], summary_df["center8_mass_fraction"], c=colors, s=65, edgecolors="black", linewidths=0.4)
+    axes[1, 1].set_title("center8 mass fraction")
+    for ax in axes.ravel():
+        ax.set_xlabel(r"Mach $M$")
+        ax.grid(True, linestyle=":", alpha=0.25)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=300, bbox_inches="tight")
+    plt.close(fig)
+
+
+def plot_modes_pdf(
+    summary_df: pd.DataFrame,
+    fields_df: pd.DataFrame,
+    *,
+    threshold_ratio: float,
+    min_half_width: float,
+    output_path: Path,
+) -> None:
+    field_names = ["rho", "u", "v", "p"]
+    field_titles = [
+        r"Density Perturbation $\hat{\rho}$",
+        r"Streamwise Velocity $\hat{u}$",
+        r"Vertical Velocity $\hat{v}$",
+        r"Pressure Perturbation $\hat{p}$",
+    ]
+    with PdfPages(output_path) as pdf:
+        for _, row in summary_df.sort_values(["alpha", "Mach"]).iterrows():
+            alpha = float(row["alpha"])
+            mach = float(row["Mach"])
+            prof = fields_df[
+                np.isclose(fields_df["alpha"].to_numpy(dtype=float), alpha)
+                & np.isclose(fields_df["Mach"].to_numpy(dtype=float), mach)
+            ].copy()
+            if prof.empty:
+                continue
+            y = prof["y"].to_numpy(dtype=float)
+            complex_fields = [
+                prof["rho_real"].to_numpy(dtype=float) + 1j * prof["rho_imag"].to_numpy(dtype=float),
+                prof["u_real"].to_numpy(dtype=float) + 1j * prof["u_imag"].to_numpy(dtype=float),
+                prof["v_real"].to_numpy(dtype=float) + 1j * prof["v_imag"].to_numpy(dtype=float),
+                prof["p_real"].to_numpy(dtype=float) + 1j * prof["p_imag"].to_numpy(dtype=float),
+            ]
+            x_limits = compute_visible_xlim(
+                y,
+                complex_fields,
+                threshold_ratio=float(threshold_ratio),
+                min_half_width=float(min_half_width),
+            )
+
+            fig, axes = plt.subplots(2, 2, figsize=(13, 8), squeeze=False)
+            for ax, field_name, title in zip(axes.ravel(), field_names, field_titles):
+                ax.plot(y, prof[f"{field_name}_real"], color="black", linewidth=1.8, label="Real")
+                ax.plot(y, prof[f"{field_name}_imag"], color="#D97706", linestyle="--", linewidth=1.3, label="Imag")
+                ax.axvline(0.0, color="#9CA3AF", linewidth=1.0, alpha=0.6)
+                ax.set_title(title)
+                ax.set_xlim(*x_limits)
+                ax.grid(True, alpha=0.25)
+            axes[0, 0].legend(frameon=False, fontsize=8)
+            fig.suptitle(
+                f"alpha={alpha:.3f}, M={mach:.3f} | status={row['best_status']}\n"
+                f"c_r={float(row['best_shooting_cr']):.5f}, c_i={float(row['best_shooting_ci']):.5f}, "
+                f"stage1={float(row['best_stage1_mismatch']):.3e}, stage2={float(row['best_stage2_mismatch']):.3e}"
+            )
+            fig.tight_layout()
+            pdf.savefig(fig)
+            plt.close(fig)
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    output_dir = DEFAULT_OUTPUT_DIR
+    output_dir.mkdir(parents=True, exist_ok=True)
+    points = parse_points(list(args.points))
+    cfg = {
+        "match_y": float(args.match_y),
+        "use_mapping": bool(args.use_mapping),
+        "mapping_scale": float(args.mapping_scale),
+        "min_y_limit": float(args.min_y_limit),
+        "max_y_limit": float(args.max_y_limit),
+        "y_limit_factor": float(args.y_limit_factor),
+        "amp_lower_bound": float(args.amp_lower_bound),
+        "amp_upper_bound": float(args.amp_upper_bound),
+        "cr_half_windows": [float(value) for value in args.cr_half_windows],
+        "ci_half_windows": [float(value) for value in args.ci_half_windows],
+        "retry_growth": float(args.retry_growth),
+        "max_retries": int(args.max_retries),
+        "max_iter": int(args.max_iter),
+        "grid_size": int(args.grid_size),
+        "ci_weight": float(args.ci_weight),
+        "cr_weight": float(args.cr_weight),
+        "continuity_weight": float(args.continuity_weight),
+        "include_generic_seeds": bool(args.include_generic_seeds),
+        "cr_points": str(args.cr_points),
+        "ci_points": str(args.ci_points),
+    }
+
+    print("Supersonic shooting point audit")
+    print(f"points: {' '.join(f'{alpha:.3f}:{mach:.3f}' for alpha, mach in points)}")
+    print(f"workers={int(args.workers)}")
+    print(
+        f"box: min={float(args.min_y_limit):.1f} max={float(args.max_y_limit):.1f} "
+        f"factor={float(args.y_limit_factor):.2f} amp=[{float(args.amp_lower_bound):.1f},{float(args.amp_upper_bound):.1f}]"
+    )
+
+    summary_rows: list[dict[str, object]] = []
+    candidate_rows: list[dict[str, object]] = []
+    field_rows: list[dict[str, object]] = []
+
+    with ProcessPoolExecutor(max_workers=max(int(args.workers), 1)) as executor:
+        futures = {executor.submit(evaluate_point, point, cfg): point for point in points}
+        for future in as_completed(futures):
+            alpha, mach = futures[future]
+            summary_row, point_candidates, point_fields = future.result()
+            summary_rows.append(summary_row)
+            candidate_rows.extend(point_candidates)
+            field_rows.extend(point_fields)
+            print(
+                f"[point] alpha={alpha:.3f} Mach={mach:.3f} "
+                f"status={summary_row['best_status']} "
+                f"ci={float(summary_row['best_shooting_ci']) if np.isfinite(summary_row['best_shooting_ci']) else np.nan:.5f} "
+                f"cr={float(summary_row['best_shooting_cr']) if np.isfinite(summary_row['best_shooting_cr']) else np.nan:.5f} "
+                f"stage1={float(summary_row['best_stage1_mismatch']) if np.isfinite(summary_row['best_stage1_mismatch']) else np.nan:.3e} "
+                f"stage2={float(summary_row['best_stage2_mismatch']) if np.isfinite(summary_row['best_stage2_mismatch']) else np.nan:.3e}"
+            )
+
+    summary_df = pd.DataFrame(summary_rows).sort_values(["alpha", "Mach"]).reset_index(drop=True)
+    candidates_df = pd.DataFrame(candidate_rows)
+    if not candidates_df.empty:
+        candidates_df = candidates_df.sort_values(
+            ["alpha", "Mach", "success", "selection_metric"],
+            ascending=[True, True, False, True],
+        ).reset_index(drop=True)
+    fields_df = pd.DataFrame(field_rows)
+    if not fields_df.empty:
+        fields_df = fields_df.sort_values(["alpha", "Mach", "y"]).reset_index(drop=True)
+
+    summary_path = output_dir / f"{args.output_stem}_summary.csv"
+    candidates_path = output_dir / f"{args.output_stem}_candidates.csv"
+    fields_path = output_dir / f"{args.output_stem}_fields.csv"
+    status_map_path = output_dir / f"{args.output_stem}_status_map.png"
+    diagnostics_path = output_dir / f"{args.output_stem}_diagnostics.png"
+    modes_pdf_path = output_dir / f"{args.output_stem}_modes.pdf"
+
+    summary_df.to_csv(summary_path, index=False)
+    candidates_df.to_csv(candidates_path, index=False)
+    fields_df.to_csv(fields_path, index=False)
+    plot_status_map(summary_df, status_map_path)
+    plot_diagnostics(summary_df, diagnostics_path)
+    if not fields_df.empty:
+        plot_modes_pdf(
+            summary_df,
+            fields_df,
+            threshold_ratio=float(args.visible_threshold_ratio),
+            min_half_width=float(args.visible_min_half_width),
+            output_path=modes_pdf_path,
+        )
+
+    print("\nSummary:")
+    with pd.option_context("display.max_columns", None, "display.width", 260):
+        print(summary_df.to_string(index=False))
+
+    print(f"Wrote {summary_path}")
+    print(f"Wrote {candidates_path}")
+    print(f"Wrote {fields_path}")
+    print(f"Wrote {status_map_path}")
+    print(f"Wrote {diagnostics_path}")
+    if not fields_df.empty:
+        print(f"Wrote {modes_pdf_path}")
+
+
+if __name__ == "__main__":
+    main()
