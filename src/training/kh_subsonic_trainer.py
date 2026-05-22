@@ -225,6 +225,7 @@ def normalize_classic_full_mode(
     v: np.ndarray,
     p: np.ndarray,
     rho: np.ndarray,
+    gamma: np.ndarray | None = None,
 ) -> dict[str, np.ndarray]:
     idx = int(np.argmax(np.abs(rho)))
     if np.abs(rho[idx]) > 0.0:
@@ -235,14 +236,16 @@ def normalize_classic_full_mode(
         u, v, p, rho = -u, -v, -p, -rho
 
     scale = max(np.max(np.abs(np.real(rho))), np.max(np.abs(np.imag(rho))), 1e-12)
-    return {
+    out = {
         "y": np.asarray(y, dtype=float),
         "u": np.asarray(u / scale, dtype=np.complex128),
         "v": np.asarray(v / scale, dtype=np.complex128),
         "p": np.asarray(p / scale, dtype=np.complex128),
         "rho": np.asarray(rho / scale, dtype=np.complex128),
-        "gamma": np.asarray(gamma, dtype=np.complex128),
     }
+    if gamma is not None:
+        out["gamma"] = np.asarray(gamma, dtype=np.complex128)
+    return out
 
 
 def normalize_predicted_full_mode_torch(
@@ -425,7 +428,7 @@ def load_shooting_classic_full_mode(alpha: float, mach: float) -> dict[str, np.n
     v = -p_y / (i_alpha * (u_bar - c))
     u = -(du_bar * v + i_alpha * p) / (i_alpha * (u_bar - c))
     rho = p * (float(mach) ** 2)
-    return normalize_classic_full_mode(y, u, v, p, rho)
+    return normalize_classic_full_mode(y, u, v, p, rho, gamma=gamma)
 
 
 def reconstruct_predicted_pressure_mode(
