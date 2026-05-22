@@ -169,6 +169,11 @@ class KHSubsonicTrainingConfig:
     q_supervision_every: int = 20
     q_supervision_alpha_count: int = 6
     q_supervision_alphas: tuple[float, ...] = ()
+    w_riccati_gamma_supervision: float = 0.0
+    riccati_gamma_n_xi: int = 97
+    riccati_gamma_every: int = 20
+    riccati_gamma_alpha_count: int = 6
+    riccati_gamma_alphas: tuple[float, ...] = ()
     w_riccati_center_kappa: float = 0.0
     w_riccati_center_peak: float = 0.0
     w_riccati_boundary_band_kappa: float = 0.0
@@ -236,6 +241,7 @@ def normalize_classic_full_mode(
         "v": np.asarray(v / scale, dtype=np.complex128),
         "p": np.asarray(p / scale, dtype=np.complex128),
         "rho": np.asarray(rho / scale, dtype=np.complex128),
+        "gamma": np.asarray(gamma, dtype=np.complex128),
     }
 
 
@@ -845,6 +851,40 @@ def build_q_supervision_alphas(
     return alpha_samples[perm]
 
 
+def build_gamma_supervision_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    alpha_ref: torch.Tensor,
+    *,
+    device: torch.device,
+) -> torch.Tensor:
+    if len(cfg.riccati_gamma_alphas):
+        return torch.tensor(cfg.riccati_gamma_alphas, dtype=alpha_ref.dtype, device=device).view(-1, 1)
+
+    count = min(int(cfg.riccati_gamma_alpha_count), int(alpha_ref.shape[0]))
+    if count <= 0:
+        return alpha_ref[:0]
+
+    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(cfg.alpha_min)), float(cfg.alpha_max))
+    n_low = count // 2 if threshold > float(cfg.alpha_min) else 0
+    n_base = count - n_low
+
+    chunks: list[torch.Tensor] = []
+    if n_base > 0:
+        if alpha_ref.shape[0] <= n_base:
+            chunks.append(alpha_ref[:n_base])
+        else:
+            perm = torch.randperm(alpha_ref.shape[0], device=device)[:n_base]
+            chunks.append(alpha_ref[perm])
+    if n_low > 0:
+        low = torch.rand(n_low, 1, device=device, dtype=alpha_ref.dtype)
+        low = float(cfg.alpha_min) + (threshold - float(cfg.alpha_min)) * low
+        chunks.append(low)
+
+    alpha_samples = torch.cat(chunks, dim=0)
+    perm = torch.randperm(alpha_samples.shape[0], device=device)
+    return alpha_samples[perm]
+
+
 def riccati_q_supervision_loss(
     model: KHSubsonicFixedMachPINN,
     alpha_samples: torch.Tensor,
@@ -885,6 +925,62 @@ def riccati_q_supervision_loss(
         q_local = q_pred[torch.tensor(overlap, device=device)][torch.tensor(mask, device=device)]
         alpha_weight = float(low_alpha_weight) if alpha_scalar <= float(low_alpha_threshold) else 1.0
         losses.append(alpha_weight * torch.mean((q_local - target) ** 2))
+
+    if not losses:
+        return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
+    return torch.stack(losses).mean()
+
+
+def riccati_gamma_supervision_loss(
+    model: KHSubsonicFixedMachPINN,
+    alpha_samples: torch.Tensor,
+    reference_cache: FullModeReferenceCache,
+    *,
+    n_xi: int,
+    phase_mask_fraction: float,
+    low_alpha_threshold: float,
+    low_alpha_weight: float,
+    device: torch.device,
+) -> torch.Tensor:
+    losses: list[torch.Tensor] = []
+    xi_template = torch.linspace(-0.98, 0.98, int(n_xi), device=device).view(-1, 1)
+    y_pred = xi_to_y(xi_template, model.get_mapping_scale().detach())[:, 0].detach().cpu().numpy()
+
+    for alpha_value in alpha_samples[:, 0].detach().cpu().numpy():
+        alpha_scalar = float(alpha_value)
+        alpha_line = torch.full_like(xi_template, alpha_scalar)
+        gamma_pred = model(xi_template, alpha_line)
+        kappa_pred = gamma_pred[:, 0]
+        q_pred = gamma_pred[:, 1]
+
+        fields_ref = reference_cache.get(alpha_scalar)
+        y_ref = np.asarray(fields_ref["y"], dtype=float)
+        p_ref = np.asarray(fields_ref["p"], dtype=np.complex128)
+        gamma_ref = np.asarray(fields_ref["gamma"], dtype=np.complex128)
+        overlap = (y_pred >= float(np.min(y_ref))) & (y_pred <= float(np.max(y_ref)))
+        if not np.any(overlap):
+            continue
+
+        y_overlap = y_pred[overlap]
+        p_ref_real = np.interp(y_overlap, y_ref, np.real(p_ref))
+        p_ref_imag = np.interp(y_overlap, y_ref, np.imag(p_ref))
+        env_ref = np.hypot(p_ref_real, p_ref_imag)
+        kappa_ref_interp = np.interp(y_overlap, y_ref, np.real(gamma_ref))
+        q_ref_interp = np.interp(y_overlap, y_ref, np.imag(gamma_ref))
+        amp_threshold = float(phase_mask_fraction) * max(float(np.max(np.abs(p_ref))), 1e-12)
+        mask = env_ref >= amp_threshold
+        if not np.any(mask):
+            mask = np.ones_like(env_ref, dtype=bool)
+
+        mask_overlap_t = torch.tensor(overlap, device=device, dtype=torch.bool)
+        mask_local_t = torch.tensor(mask, device=device, dtype=torch.bool)
+        target_kappa = torch.tensor(kappa_ref_interp[mask], dtype=kappa_pred.dtype, device=device)
+        target_q = torch.tensor(q_ref_interp[mask], dtype=q_pred.dtype, device=device)
+        kappa_local = kappa_pred[mask_overlap_t][mask_local_t]
+        q_local = q_pred[mask_overlap_t][mask_local_t]
+        alpha_weight = float(low_alpha_weight) if alpha_scalar <= float(low_alpha_threshold) else 1.0
+        loss_local = 0.5 * (torch.mean((kappa_local - target_kappa) ** 2) + torch.mean((q_local - target_q) ** 2))
+        losses.append(alpha_weight * loss_local)
 
     if not losses:
         return torch.zeros(1, device=device, dtype=alpha_samples.dtype).mean()
@@ -1027,7 +1123,9 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     use_classic_ci_supervision = bool(cfg.enable_classic_ci_supervision)
     use_classic_mode_audit = bool(cfg.enable_classic_mode_audit)
     use_classic_aux_mode_supervision = bool(
-        (cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0) or cfg.w_q_supervision > 0.0
+        (cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0)
+        or cfg.w_q_supervision > 0.0
+        or cfg.w_riccati_gamma_supervision > 0.0
     )
     use_classic_mode_supervision = bool(cfg.classic_mode_supervision and cfg.w_classic_mode_supervision > 0.0)
     use_classic_full_mode_supervision = bool(
@@ -1064,7 +1162,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
 
     full_mode_reference_cache = None
-    if use_classic_full_mode_supervision or use_classic_balanced_full_mode_supervision:
+    if use_classic_full_mode_supervision or use_classic_balanced_full_mode_supervision or cfg.w_riccati_gamma_supervision > 0.0:
         full_mode_reference_cache = FullModeReferenceCache(
             mach=cfg.mach,
             n_points=cfg.classic_n_points,
@@ -1278,6 +1376,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_loc_spread = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_anchor = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_q_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_riccati_gamma_supervision = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_center_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_center_peak = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_riccati_boundary_band_kappa = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
@@ -1420,6 +1519,23 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         low_alpha_weight=cfg.mode_low_alpha_weight,
                         device=device,
                     )
+                if (
+                    cfg.w_riccati_gamma_supervision > 0.0
+                    and cfg.riccati_gamma_every > 0
+                    and epoch % cfg.riccati_gamma_every == 0
+                ):
+                    alpha_gamma = build_gamma_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert full_mode_reference_cache is not None
+                    loss_riccati_gamma_supervision = riccati_gamma_supervision_loss(
+                        model,
+                        alpha_gamma,
+                        full_mode_reference_cache,
+                        n_xi=cfg.riccati_gamma_n_xi,
+                        phase_mask_fraction=cfg.phase_mask_fraction,
+                        low_alpha_threshold=cfg.mode_low_alpha_threshold,
+                        low_alpha_weight=cfg.mode_low_alpha_weight,
+                        device=device,
+                    )
             else:
                 loss_bc = boundary_decay_loss(model, xi_left, xi_right, alpha_boundary)
                 if cfg.anchor_strategy in {"point", "max", "point_max"}:
@@ -1513,6 +1629,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_first_order_amp_cap * loss_first_order_amp_cap
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
+                + cfg.w_riccati_gamma_supervision * loss_riccati_gamma_supervision
                 + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
                 + cfg.w_riccati_center_peak * loss_riccati_center_peak
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa
@@ -1581,6 +1698,23 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         alpha_q,
                         mode_reference_cache,
                         n_xi=cfg.q_supervision_n_xi,
+                        phase_mask_fraction=cfg.phase_mask_fraction,
+                        low_alpha_threshold=cfg.mode_low_alpha_threshold,
+                        low_alpha_weight=cfg.mode_low_alpha_weight,
+                        device=device,
+                    )
+                if (
+                    cfg.w_riccati_gamma_supervision > 0.0
+                    and cfg.riccati_gamma_every > 0
+                    and epoch % cfg.riccati_gamma_every == 0
+                ):
+                    alpha_gamma = build_gamma_supervision_alphas(cfg, alpha_ref, device=device)
+                    assert full_mode_reference_cache is not None
+                    loss_riccati_gamma_supervision = riccati_gamma_supervision_loss(
+                        model,
+                        alpha_gamma,
+                        full_mode_reference_cache,
+                        n_xi=cfg.riccati_gamma_n_xi,
                         phase_mask_fraction=cfg.phase_mask_fraction,
                         low_alpha_threshold=cfg.mode_low_alpha_threshold,
                         low_alpha_weight=cfg.mode_low_alpha_weight,
@@ -1678,6 +1812,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_first_order_amp_cap * loss_first_order_amp_cap
                 + cfg.w_riccati_anchor * loss_riccati_anchor
                 + cfg.w_q_supervision * loss_q_supervision
+                + cfg.w_riccati_gamma_supervision * loss_riccati_gamma_supervision
                 + cfg.w_riccati_center_kappa * loss_riccati_center_kappa
                 + cfg.w_riccati_center_peak * loss_riccati_center_peak
                 + cfg.w_riccati_boundary_band_kappa * loss_riccati_boundary_band_kappa

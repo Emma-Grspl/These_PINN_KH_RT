@@ -49,6 +49,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--low-alpha-weight", type=float, default=6.0)
     parser.add_argument("--mode-error-threshold", type=float, default=0.05)
     parser.add_argument("--q-supervision-weight", type=float, default=4.0)
+    parser.add_argument("--gamma-supervision-weight", type=float, default=0.0)
     parser.add_argument("--riccati-anchor-weight", type=float, default=2.0)
     parser.add_argument("--boundary-kappa-weight", type=float, default=5.0)
     parser.add_argument("--boundary-q-weight", type=float, default=8.0)
@@ -57,6 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--center-peak-weight", type=float, default=0.5)
     parser.add_argument("--anchor-alphas", type=float, nargs="*", default=[0.05, 0.10, 0.20, 0.30, 0.40, 0.50])
     parser.add_argument("--q-supervision-alphas", type=float, nargs="*", default=None)
+    parser.add_argument("--gamma-supervision-alphas", type=float, nargs="*", default=None)
     return parser
 
 
@@ -98,6 +100,9 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
     q_supervision_alphas = args.q_supervision_alphas
     if q_supervision_alphas is None:
         q_supervision_alphas = args.anchor_alphas
+    gamma_supervision_alphas = args.gamma_supervision_alphas
+    if gamma_supervision_alphas is None:
+        gamma_supervision_alphas = args.anchor_alphas
 
     return KHSubsonicTrainingConfig(
         mach=float(warm_config["mach"]),
@@ -182,6 +187,11 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
         q_supervision_every=10,
         q_supervision_alpha_count=len(q_supervision_alphas),
         q_supervision_alphas=tuple(float(alpha) for alpha in q_supervision_alphas),
+        w_riccati_gamma_supervision=float(args.gamma_supervision_weight),
+        riccati_gamma_n_xi=129,
+        riccati_gamma_every=10,
+        riccati_gamma_alpha_count=len(gamma_supervision_alphas),
+        riccati_gamma_alphas=tuple(float(alpha) for alpha in gamma_supervision_alphas),
         w_riccati_center_kappa=float(args.center_kappa_weight),
         w_riccati_center_peak=float(args.center_peak_weight),
         w_riccati_boundary_band_kappa=float(args.boundary_kappa_weight),
@@ -317,6 +327,7 @@ def main() -> None:
     print(
         "weights: "
         f"q_sup={cfg.w_q_supervision:.2f} "
+        f"gamma_sup={cfg.w_riccati_gamma_supervision:.2f} "
         f"anchor={cfg.w_riccati_anchor:.2f} "
         f"bc_k={cfg.w_riccati_boundary_band_kappa:.2f} "
         f"bc_q={cfg.w_riccati_boundary_band_q:.2f} "
@@ -385,6 +396,7 @@ def main() -> None:
         "learning_rate": float(args.learning_rate),
         "mode_branch_lr": float(cfg.mode_branch_lr or cfg.learning_rate),
         "w_q_supervision": float(cfg.w_q_supervision),
+        "w_riccati_gamma_supervision": float(cfg.w_riccati_gamma_supervision),
         "w_riccati_anchor": float(cfg.w_riccati_anchor),
         "w_riccati_boundary_band_kappa": float(cfg.w_riccati_boundary_band_kappa),
         "w_riccati_boundary_band_q": float(cfg.w_riccati_boundary_band_q),
