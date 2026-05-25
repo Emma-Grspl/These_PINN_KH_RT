@@ -88,6 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ci-weight", type=float, default=4.0)
     parser.add_argument("--cr-weight", type=float, default=0.35)
     parser.add_argument("--continuity-weight", type=float, default=1.0)
+    parser.add_argument("--acceptance-mode", choices=["modal", "spectral"], default="modal")
     parser.add_argument("--edge-amp-threshold", type=float, default=0.05)
     parser.add_argument("--max-stage1", type=float, default=5.0e-2)
     parser.add_argument("--max-err-ci-abs", type=float, default=1.0e-2)
@@ -135,6 +136,7 @@ def build_cfg(args: argparse.Namespace) -> dict[str, object]:
         "ci_weight": float(args.ci_weight),
         "cr_weight": float(args.cr_weight),
         "continuity_weight": float(args.continuity_weight),
+        "acceptance_mode": str(args.acceptance_mode),
         "edge_amp_threshold": float(args.edge_amp_threshold),
         "max_stage1": float(args.max_stage1),
         "max_err_ci_abs": float(args.max_err_ci_abs),
@@ -217,6 +219,12 @@ def continuation_selection_metric(
     if previous_cr is not None and previous_ci is not None:
         return float(continuity + penalty - bonus - 0.25 * float(shooting_ci)), "distance_to_previous_fallback"
     return float(-shooting_ci + penalty - bonus), "max_ci_anchor_fallback"
+
+
+def preferred_success_flag(row: dict[str, object], *, acceptance_mode: str) -> bool:
+    if str(acceptance_mode) == "spectral":
+        return bool(row["spectral_success"])
+    return bool(row["success"])
 
 
 def build_seeds_for_step(
@@ -412,6 +420,17 @@ def evaluate_step(
                         "status": success_label(bool(result.spectral_success), bool(result.mode_success)),
                         "selection_metric": float(metric_value),
                         "selection_metric_name": str(metric_name),
+                        "success_priority": (
+                            0
+                            if preferred_success_flag(
+                                {
+                                    "spectral_success": bool(result.spectral_success),
+                                    "success": bool(result.success),
+                                },
+                                acceptance_mode=str(cfg["acceptance_mode"]),
+                            )
+                            else 1
+                        ),
                         "y_limit": float(result.y_limit),
                     }
                 )
@@ -419,7 +438,7 @@ def evaluate_step(
     ranked = sorted(
         candidate_rows,
         key=lambda row: (
-            0 if bool(row["success"]) else 1,
+            0 if preferred_success_flag(row, acceptance_mode=str(cfg["acceptance_mode"])) else 1,
             float(row["selection_metric"]),
             float(row["stage1_mismatch"] + row["stage2_mismatch"]),
         ),
@@ -503,6 +522,7 @@ def evaluate_step(
         "continuation_accepted": False,
         "continuation_state": "",
         "continuation_stop_reason": "",
+        "acceptance_mode": str(cfg["acceptance_mode"]),
         "exception": "",
     }
 
@@ -536,8 +556,15 @@ def continuation_acceptance(
     *,
     cfg: dict[str, object],
 ) -> tuple[bool, str]:
-    if str(summary_row["best_status"]) != "validated":
-        return False, "status_not_validated"
+    acceptance_mode = str(cfg["acceptance_mode"])
+    if acceptance_mode == "modal":
+        if str(summary_row["best_status"]) != "validated":
+            return False, "status_not_validated"
+    elif acceptance_mode == "spectral":
+        if not bool(summary_row["best_spectral_success"]):
+            return False, "spectral_not_validated"
+    else:
+        raise ValueError(f"acceptance_mode inconnu: {acceptance_mode!r}")
     if not np.isfinite(summary_row["best_stage1_mismatch"]) or float(summary_row["best_stage1_mismatch"]) > float(cfg["max_stage1"]):
         return False, "stage1_too_large"
     if bool(summary_row["box_truncation_suspect_any_field"]):
@@ -638,6 +665,7 @@ def not_run_row(
         "continuation_accepted": False,
         "continuation_state": "not_run_after_reject",
         "continuation_stop_reason": str(stop_reason),
+        "acceptance_mode": str(cfg["acceptance_mode"]),
         "exception": "",
     }
 
@@ -831,7 +859,9 @@ def plot_continuation_lines(summary_df: pd.DataFrame, output_path: Path) -> None
     handles, labels = axes[0, 0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 4), frameon=True)
-    fig.suptitle(r"Supersonic shooting: strict local continuation for $c_i(\alpha)$", y=0.995)
+    acceptance_mode = str(summary_df["acceptance_mode"].dropna().iloc[0]) if "acceptance_mode" in summary_df.columns and not summary_df.empty else "modal"
+    title = "strict local continuation" if acceptance_mode == "modal" else "spectral-only local continuation"
+    fig.suptitle(rf"Supersonic shooting: {title} for $c_i(\alpha)$", y=0.995)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -865,7 +895,9 @@ def plot_continuation_errors(summary_df: pd.DataFrame, output_path: Path) -> Non
     handles, labels = axes[0, 0].get_legend_handles_labels()
     if handles:
         fig.legend(handles, labels, loc="upper center", ncol=min(len(labels), 3), frameon=True)
-    fig.suptitle(r"Supersonic shooting: strict continuation $c_i$ error", y=0.995)
+    acceptance_mode = str(summary_df["acceptance_mode"].dropna().iloc[0]) if "acceptance_mode" in summary_df.columns and not summary_df.empty else "modal"
+    title = "strict continuation" if acceptance_mode == "modal" else "spectral-only continuation"
+    fig.suptitle(rf"Supersonic shooting: {title} $c_i$ error", y=0.995)
     fig.tight_layout(rect=[0.0, 0.0, 1.0, 0.96])
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=300, bbox_inches="tight")
@@ -880,7 +912,8 @@ def main() -> None:
     line_specs = [parse_line_spec(raw) for raw in args.line_specs]
     cfg = build_cfg(args)
 
-    print("Supersonic shooting strict local continuation")
+    mode_label = "strict local continuation" if str(args.acceptance_mode) == "modal" else "spectral-only local continuation"
+    print(f"Supersonic shooting {mode_label}")
     for line in line_specs:
         print(
             f"line={line.line_id} mach={line.mach:.3f} anchor={line.anchor_alpha:.3f} "
@@ -897,6 +930,7 @@ def main() -> None:
         f"delta_ci<={float(args.max_delta_ci):.3e} "
         f"delta_cr<={float(args.max_delta_cr):.3e}"
     )
+    print(f"acceptance-mode={args.acceptance_mode}")
 
     summary_rows: list[dict[str, object]] = []
     candidate_rows: list[dict[str, object]] = []
@@ -917,8 +951,8 @@ def main() -> None:
     fields_df = pd.DataFrame(field_rows)
     if not candidates_df.empty:
         candidates_df = candidates_df.sort_values(
-            ["Mach", "alpha", "continuation_direction", "continuation_step_index", "success", "selection_metric"],
-            ascending=[True, True, True, True, False, True],
+            ["Mach", "alpha", "continuation_direction", "continuation_step_index", "success_priority", "selection_metric"],
+            ascending=[True, True, True, True, True, True],
         ).reset_index(drop=True)
     if not fields_df.empty:
         fields_df = fields_df.sort_values(["Mach", "alpha", "y"]).reset_index(drop=True)
