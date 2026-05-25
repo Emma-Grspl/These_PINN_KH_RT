@@ -129,6 +129,8 @@ def sample_alpha_adaptive_batch(
     focus_alphas: np.ndarray | None,
     focus_fraction: float,
     focus_half_width: float,
+    low_alpha_fraction: float = 0.0,
+    low_alpha_threshold: float | None = None,
     neutral_fraction: float = 0.0,
     neutral_alpha: float | None = None,
     neutral_half_width: float = 0.0,
@@ -146,7 +148,13 @@ def sample_alpha_adaptive_batch(
     if neutral_alpha is None or neutral_half_width <= 0.0:
         n_neutral = 0
     n_neutral = min(max(n_neutral, 0), remaining)
-    n_uniform = n_points - n_focus - n_neutral
+    remaining -= n_neutral
+
+    n_low = int(round(low_alpha_fraction * n_points))
+    if low_alpha_threshold is None or float(low_alpha_threshold) <= float(alpha_min):
+        n_low = 0
+    n_low = min(max(n_low, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral - n_low
 
     chunks: list[torch.Tensor] = []
     if n_uniform > 0:
@@ -172,6 +180,17 @@ def sample_alpha_adaptive_batch(
             sample_alpha_batch(
                 n_neutral,
                 alpha_min=alpha_low,
+                alpha_max=alpha_high,
+                device=device,
+            )
+        )
+
+    if n_low > 0:
+        alpha_high = min(alpha_max, float(low_alpha_threshold))
+        chunks.append(
+            sample_alpha_batch(
+                n_low,
+                alpha_min=alpha_min,
                 alpha_max=alpha_high,
                 device=device,
             )

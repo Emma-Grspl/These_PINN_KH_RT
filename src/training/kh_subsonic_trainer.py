@@ -84,6 +84,8 @@ class KHSubsonicTrainingConfig:
     stage2_neutral_fraction: float | None = None
     focus_fraction: float = 0.6
     focus_half_width: float = 0.03
+    low_alpha_sample_fraction: float = 0.0
+    low_alpha_sample_threshold: float | None = None
     neutral_fraction: float = 0.0
     ci_supervision_neutral_boost: float = 0.0
     neutral_half_width: float = 0.03
@@ -1298,6 +1300,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            low_alpha_fraction=cfg.low_alpha_sample_fraction,
+            low_alpha_threshold=cfg.low_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1311,6 +1315,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            low_alpha_fraction=cfg.low_alpha_sample_fraction,
+            low_alpha_threshold=cfg.low_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1323,6 +1329,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            low_alpha_fraction=cfg.low_alpha_sample_fraction,
+            low_alpha_threshold=cfg.low_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1342,6 +1350,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            low_alpha_fraction=cfg.low_alpha_sample_fraction,
+            low_alpha_threshold=cfg.low_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1356,6 +1366,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
+            low_alpha_fraction=cfg.low_alpha_sample_fraction,
+            low_alpha_threshold=cfg.low_alpha_sample_threshold,
             neutral_fraction=ci_supervision_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
