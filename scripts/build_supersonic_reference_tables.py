@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument("--spectral-summaries", type=Path, nargs="+", required=True)
+    parser.add_argument("--spectral-fields", type=Path, nargs="*", default=[])
     parser.add_argument("--modal-summaries", type=Path, nargs="*", default=[])
     parser.add_argument("--modal-fields", type=Path, nargs="*", default=[])
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
@@ -62,7 +63,7 @@ def deduplicate_reference_rows(df: pd.DataFrame) -> pd.DataFrame:
     return work.drop(columns=["dedup_err_ci_key", "dedup_stage1_key", "dedup_select_key"])
 
 
-def build_spectral_reference(spectral_df: pd.DataFrame, modal_df: pd.DataFrame) -> pd.DataFrame:
+def build_spectral_reference(spectral_df: pd.DataFrame, modal_reference_df: pd.DataFrame) -> pd.DataFrame:
     spectral = spectral_df.copy()
     if spectral.empty:
         return spectral
@@ -71,11 +72,8 @@ def build_spectral_reference(spectral_df: pd.DataFrame, modal_df: pd.DataFrame) 
     accepted = deduplicate_reference_rows(accepted)
 
     modal_keys: set[tuple[float, float]] = set()
-    if not modal_df.empty:
-        modal_accepted = modal_df[
-            modal_df["continuation_accepted"].fillna(False) & modal_df["best_mode_success"].fillna(False)
-        ].copy()
-        for _, row in modal_accepted.iterrows():
+    if not modal_reference_df.empty:
+        for _, row in modal_reference_df.iterrows():
             modal_keys.add((round(float(row["Mach"]), 8), round(float(row["alpha"]), 8)))
 
     accepted["reference_cr"] = accepted["best_shooting_cr"]
@@ -120,13 +118,22 @@ def build_spectral_reference(spectral_df: pd.DataFrame, modal_df: pd.DataFrame) 
     return accepted[cols].sort_values(["Mach", "alpha"]).reset_index(drop=True)
 
 
-def build_modal_reference(modal_df: pd.DataFrame) -> pd.DataFrame:
+def build_modal_reference(modal_df: pd.DataFrame, spectral_df: pd.DataFrame) -> pd.DataFrame:
     modal = modal_df.copy()
-    if modal.empty:
-        return modal
-    accepted = modal[modal["continuation_accepted"].fillna(False)].copy()
-    accepted = accepted[accepted["acceptance_mode"].astype(str) == "modal"].copy()
-    accepted = accepted[accepted["best_mode_success"].fillna(False)].copy()
+    if not modal.empty:
+        accepted = modal[modal["continuation_accepted"].fillna(False)].copy()
+        accepted = accepted[accepted["acceptance_mode"].astype(str) == "modal"].copy()
+        accepted = accepted[accepted["best_mode_success"].fillna(False)].copy()
+    else:
+        spectral = spectral_df.copy()
+        if spectral.empty:
+            return pd.DataFrame()
+        accepted = spectral[spectral["continuation_accepted"].fillna(False)].copy()
+        accepted = accepted[accepted["best_mode_success"].fillna(False)].copy()
+        accepted = accepted[accepted["best_status"].astype(str) == "validated"].copy()
+        if accepted.empty:
+            return accepted
+        accepted["source_label"] = accepted["source_label"].astype(str) + "_modal_fallback"
     accepted = deduplicate_reference_rows(accepted)
 
     accepted["reference_cr"] = accepted["best_shooting_cr"]
@@ -169,11 +176,11 @@ def build_modal_reference(modal_df: pd.DataFrame) -> pd.DataFrame:
     return accepted[cols].sort_values(["Mach", "alpha"]).reset_index(drop=True)
 
 
-def build_modal_fields_reference(modal_fields_df: pd.DataFrame, modal_reference_df: pd.DataFrame) -> pd.DataFrame:
-    if modal_fields_df.empty or modal_reference_df.empty:
+def build_modal_fields_reference(fields_df: pd.DataFrame, modal_reference_df: pd.DataFrame) -> pd.DataFrame:
+    if fields_df.empty or modal_reference_df.empty:
         return pd.DataFrame()
     keys = modal_reference_df[["Mach", "alpha"]].drop_duplicates().copy()
-    fields = modal_fields_df.merge(keys, on=["Mach", "alpha"], how="inner")
+    fields = fields_df.merge(keys, on=["Mach", "alpha"], how="inner")
     return fields.sort_values(["Mach", "alpha", "y"]).reset_index(drop=True)
 
 
@@ -182,12 +189,14 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     spectral_df = load_csvs(list(args.spectral_summaries), label="spectral_summary")
+    spectral_fields_df = load_csvs(list(args.spectral_fields), label="spectral_fields")
     modal_df = load_csvs(list(args.modal_summaries), label="modal_summary")
     modal_fields_df = load_csvs(list(args.modal_fields), label="modal_fields")
 
-    spectral_ref = build_spectral_reference(spectral_df, modal_df)
-    modal_ref = build_modal_reference(modal_df)
-    modal_fields_ref = build_modal_fields_reference(modal_fields_df, modal_ref)
+    modal_ref = build_modal_reference(modal_df, spectral_df)
+    spectral_ref = build_spectral_reference(spectral_df, modal_ref)
+    fields_source_df = modal_fields_df if not modal_fields_df.empty else spectral_fields_df
+    modal_fields_ref = build_modal_fields_reference(fields_source_df, modal_ref)
 
     spectral_path = args.output_dir / f"{args.output_stem}_spectral.csv"
     modal_path = args.output_dir / f"{args.output_stem}_modal.csv"
