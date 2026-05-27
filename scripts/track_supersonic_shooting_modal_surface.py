@@ -497,6 +497,8 @@ def attempt_point(
 
 def fields_rows_from_bundle(summary_row: dict[str, object], bundle: dict[str, np.ndarray]) -> list[dict[str, object]]:
     rows: list[dict[str, object]] = []
+    parent_mach = summary_row.get("parent_mach", np.nan)
+    parent_alpha = summary_row.get("parent_alpha", np.nan)
     for y_value, rho_value, u_value, v_value, p_value in zip(
         bundle["y"], bundle["rho"], bundle["u"], bundle["v"], bundle["p"]
     ):
@@ -505,8 +507,8 @@ def fields_rows_from_bundle(summary_row: dict[str, object], bundle: dict[str, np
                 "Mach": float(summary_row["Mach"]),
                 "alpha": float(summary_row["alpha"]),
                 "best_status": str(summary_row["status"]),
-                "parent_mach": float(summary_row["parent_mach"]),
-                "parent_alpha": float(summary_row["parent_alpha"]),
+                "parent_mach": float(parent_mach) if np.isfinite(parent_mach) else np.nan,
+                "parent_alpha": float(parent_alpha) if np.isfinite(parent_alpha) else np.nan,
                 "y": float(y_value),
                 "rho_real": float(np.real(rho_value)),
                 "rho_imag": float(np.imag(rho_value)),
@@ -548,6 +550,8 @@ def load_anchor_states(anchor_df: pd.DataFrame, anchor_fields_df: pd.DataFrame, 
             bundle = bundle_from_dataframe(sub.sort_values("y"))
         summary_row = {
             **row.to_dict(),
+            "parent_mach": np.nan,
+            "parent_alpha": np.nan,
             "best_shooting_cr": float(row["reference_cr"]),
             "best_shooting_ci": float(row["reference_ci"]),
             "status": "anchor",
