@@ -32,18 +32,29 @@ export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
 echo "Job PINN subsonique KH M=0.5 Riccati core1d lance sur ${SLURMD_NODENAME}"
 echo "Warm start=${WARMSTART_RUN_DIR:-model_saved/kh_subsonic_fixed_mach_M05_riccati_lowalpha_gamma_repair_w3}"
+if [ -n "${WARMSTART_CHECKPOINT:-}" ]; then
+  echo "Warm checkpoint=${WARMSTART_CHECKPOINT}"
+fi
 echo "Epochs=${EPOCHS:-1800} LR=${LEARNING_RATE:-2e-4} CI_LR=${CI_BRANCH_LR:-5e-5} MODE_LR=${MODE_BRANCH_LR:-2e-4}"
 echo "Alpha range=[${ALPHA_MIN:-0.05},${ALPHA_MAX:-0.8}] low-alpha-threshold=${LOW_ALPHA_THRESHOLD:-0.5}"
 echo "Weights: ci=${CI_SUPERVISION_WEIGHT:-5.0} q=${Q_SUPERVISION_WEIGHT:-5.0} gamma=${GAMMA_SUPERVISION_WEIGHT:-3.0} anchor=${RICCATI_ANCHOR_WEIGHT:-2.0} bc_q=${BOUNDARY_Q_WEIGHT:-10.0} shoot=${SHOOTING_MATCH_WEIGHT:-12.0}"
 echo "Sampling: focus_fraction=${FOCUS_FRACTION:-0.50} low_alpha_sample_fraction=${LOW_ALPHA_SAMPLE_FRACTION:-0.30}"
+echo "Checkpoint every=${CHECKPOINT_EVERY:-250}"
 echo "CPUs par tache: ${SLURM_CPUS_PER_TASK}"
 date
 nvidia-smi || true
 
+EXTRA_ARGS=()
+if [ -n "${WARMSTART_CHECKPOINT:-}" ]; then
+  EXTRA_ARGS+=(--warmstart-checkpoint "${WARMSTART_CHECKPOINT}")
+fi
+
 srun python3 scripts/run_kh_subsonic_riccati_core1d.py \
   --warmstart-run-dir "${WARMSTART_RUN_DIR:-model_saved/kh_subsonic_fixed_mach_M05_riccati_lowalpha_gamma_repair_w3}" \
+  "${EXTRA_ARGS[@]}" \
   --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_fixed_mach_M05_riccati_core1d}" \
   --epochs "${EPOCHS:-1800}" \
+  --checkpoint-every "${CHECKPOINT_EVERY:-250}" \
   --learning-rate "${LEARNING_RATE:-2e-4}" \
   --ci-branch-lr "${CI_BRANCH_LR:-5e-5}" \
   --mode-branch-lr "${MODE_BRANCH_LR:-2e-4}" \

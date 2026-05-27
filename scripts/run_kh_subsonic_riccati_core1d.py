@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from pathlib import Path
 import sys
 
@@ -35,6 +36,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmstart-checkpoint", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--epochs", type=int, default=1800)
+    parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
     parser.add_argument("--ci-branch-lr", type=float, default=5e-5)
     parser.add_argument("--mode-branch-lr", type=float, default=2e-4)
@@ -110,7 +112,7 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
         n_mode_audit_alpha=int(args.num_alpha_modes),
         n_mode_audit_y=801,
         audit_every=250,
-        checkpoint_every=500,
+        checkpoint_every=int(args.checkpoint_every),
         enable_classic_ci_supervision=True,
         enable_classic_mode_audit=True,
         separate_branch_optimizers=True,
@@ -207,6 +209,15 @@ def main() -> None:
     warm_config = warm_config_df.iloc[0]
 
     cfg = build_config(args, warm_config, checkpoint)
+    pd.DataFrame([asdict(cfg)]).to_csv(args.output_dir / "config.csv", index=False)
+    pd.DataFrame(
+        [
+            {
+                "warmstart_run_dir": str(args.warmstart_run_dir),
+                "warmstart_checkpoint": str(checkpoint),
+            }
+        ]
+    ).to_csv(args.output_dir / "warmstart_source.csv", index=False)
 
     print("Core-only 1D subsonic Riccati protocol")
     print(f"warm start={checkpoint}")
