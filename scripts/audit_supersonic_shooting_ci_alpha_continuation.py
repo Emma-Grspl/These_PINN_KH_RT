@@ -590,6 +590,7 @@ def not_run_row(
     previous_ci: float | None,
     target: pd.Series,
     stop_reason: str,
+    cfg: dict[str, object],
 ) -> dict[str, object]:
     base = candidate_row_base(
         line=line,
@@ -728,6 +729,7 @@ def evaluate_line(line: LineSpec, cfg: dict[str, object]) -> tuple[list[dict[str
                         previous_ci=float(anchor_row["best_shooting_ci"]) if np.isfinite(anchor_row["best_shooting_ci"]) else None,
                         target=targets[alpha],
                         stop_reason=f"anchor_rejected:{anchor_reason}",
+                        cfg=cfg,
                     )
                 )
         return summary_rows, candidate_rows, field_rows
@@ -756,6 +758,7 @@ def evaluate_line(line: LineSpec, cfg: dict[str, object]) -> tuple[list[dict[str
                         previous_ci=previous_ci,
                         target=targets[alpha],
                         stop_reason=stop_reason,
+                        cfg=cfg,
                     )
                 )
                 continue
