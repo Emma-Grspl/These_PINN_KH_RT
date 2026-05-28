@@ -17,6 +17,7 @@ from scripts.audit_supersonic_shooting_ci_alpha_continuation import (  # noqa: E
     LineSpec,
     build_cfg,
     evaluate_line,
+    line_anchor_key,
     parse_line_spec,
     plot_continuation_errors,
     plot_continuation_lines,
@@ -208,6 +209,49 @@ def serialize_line_specs(line_specs: list[LineSpec]) -> list[str]:
     ]
 
 
+def build_anchor_overrides(points_df: pd.DataFrame) -> dict[str, dict[str, object]]:
+    source_cache: dict[str, pd.DataFrame] = {}
+    fields_cache: dict[str, pd.DataFrame] = {}
+    overrides: dict[str, dict[str, object]] = {}
+
+    for _, row in points_df.iterrows():
+        source_csv = row.get("source_csv")
+        if source_csv is None or pd.isna(source_csv):
+            continue
+        source_csv_path = Path(str(source_csv))
+        if not source_csv_path.exists():
+            continue
+        source_df = source_cache.get(str(source_csv_path))
+        if source_df is None:
+            source_df = pd.read_csv(source_csv_path)
+            source_cache[str(source_csv_path)] = source_df
+        matched = source_df[
+            np.isclose(source_df["Mach"].to_numpy(dtype=float), float(row["Mach"]))
+            & np.isclose(source_df["alpha"].to_numpy(dtype=float), float(row["alpha"]))
+        ]
+        if matched.empty:
+            continue
+        summary_row = matched.iloc[0].to_dict()
+        fields_csv_path = source_csv_path.with_name(source_csv_path.name.replace("_summary.csv", "_fields.csv"))
+        reference_fields = None
+        if fields_csv_path.exists():
+            fields_df = fields_cache.get(str(fields_csv_path))
+            if fields_df is None:
+                fields_df = pd.read_csv(fields_csv_path)
+                fields_cache[str(fields_csv_path)] = fields_df
+            sub_fields = fields_df[
+                np.isclose(fields_df["Mach"].to_numpy(dtype=float), float(row["Mach"]))
+                & np.isclose(fields_df["alpha"].to_numpy(dtype=float), float(row["alpha"]))
+            ].copy()
+            if not sub_fields.empty:
+                reference_fields = sub_fields
+        overrides[line_anchor_key(float(row["Mach"]), float(row["alpha"]))] = {
+            "summary_row": summary_row,
+            "reference_fields": reference_fields,
+        }
+    return overrides
+
+
 def main() -> None:
     args = build_parser().parse_args()
     output_dir = DEFAULT_OUTPUT_DIR
@@ -254,6 +298,7 @@ def main() -> None:
 
     cfg = build_cfg(args)
     cfg["acceptance_mode"] = "spectral"
+    cfg["anchor_overrides"] = build_anchor_overrides(points_df)
 
     summary_rows: list[dict[str, object]] = []
     candidate_rows: list[dict[str, object]] = []

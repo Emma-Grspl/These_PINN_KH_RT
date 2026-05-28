@@ -149,6 +149,10 @@ def build_cfg(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def line_anchor_key(mach: float, alpha: float) -> str:
+    return f"{float(mach):.8f}|{float(alpha):.8f}"
+
+
 def continuity_penalty(
     *,
     shooting_cr: float,
@@ -679,6 +683,134 @@ def target_lookup_for_line(line: LineSpec, cr_points: pd.DataFrame, ci_points: p
     return targets
 
 
+def field_rows_from_reference_fields(
+    *,
+    line: LineSpec,
+    alpha: float,
+    status: str,
+    reference_fields: pd.DataFrame,
+) -> list[dict[str, object]]:
+    rows: list[dict[str, object]] = []
+    for _, field_row in reference_fields.sort_values("y").iterrows():
+        rows.append(
+            {
+                "line_id": line.line_id,
+                "alpha": float(alpha),
+                "Mach": float(line.mach),
+                "best_status": str(status),
+                "y": float(field_row["y"]),
+                "rho_real": float(field_row["rho_real"]),
+                "rho_imag": float(field_row["rho_imag"]),
+                "u_real": float(field_row["u_real"]),
+                "u_imag": float(field_row["u_imag"]),
+                "v_real": float(field_row["v_real"]),
+                "v_imag": float(field_row["v_imag"]),
+                "p_real": float(field_row["p_real"]),
+                "p_imag": float(field_row["p_imag"]),
+            }
+        )
+    return rows
+
+
+def locked_anchor_step(
+    *,
+    line: LineSpec,
+    target: pd.Series,
+    cfg: dict[str, object],
+    anchor_override: dict[str, object],
+) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
+    base = candidate_row_base(
+        line=line,
+        alpha=float(line.anchor_alpha),
+        target=target,
+        direction="anchor",
+        step_index=0,
+        previous_alpha=None,
+        previous_cr=None,
+        previous_ci=None,
+    )
+    source_row = dict(anchor_override["summary_row"])
+    reference_fields = anchor_override.get("reference_fields")
+    if reference_fields is not None and not reference_fields.empty:
+        field_rows = field_rows_from_reference_fields(
+            line=line,
+            alpha=float(line.anchor_alpha),
+            status=str(source_row.get("best_status", source_row.get("status", "validated"))),
+            reference_fields=reference_fields,
+        )
+    else:
+        field_rows = []
+
+    summary_row = {
+        **base,
+        "n_seeds": int(source_row.get("n_seeds", 0)),
+        "n_candidates": int(source_row.get("n_candidates", 0)),
+        "n_success_candidates": int(source_row.get("n_success_candidates", 0)),
+        "n_spectral_success_candidates": int(source_row.get("n_spectral_success_candidates", 0)),
+        "n_mode_success_candidates": int(source_row.get("n_mode_success_candidates", 0)),
+        "best_seed_name": str(source_row.get("best_seed_name", "locked_reference")),
+        "best_shooting_cr": float(source_row["best_shooting_cr"]),
+        "best_shooting_ci": float(source_row["best_shooting_ci"]),
+        "best_shooting_omega_i": float(source_row.get("best_shooting_omega_i", float(line.anchor_alpha) * float(source_row["best_shooting_ci"]))),
+        "best_err_cr_abs": float(source_row["best_err_cr_abs"]) if np.isfinite(source_row.get("best_err_cr_abs", np.nan)) else np.nan,
+        "best_err_ci_abs": float(source_row["best_err_ci_abs"]) if np.isfinite(source_row.get("best_err_ci_abs", np.nan)) else np.nan,
+        "best_err_ci_rel": float(source_row["best_err_ci_rel"]) if np.isfinite(source_row.get("best_err_ci_rel", np.nan)) else np.nan,
+        "best_delta_cr_prev": np.nan,
+        "best_delta_ci_prev": np.nan,
+        "best_stage1_mismatch": float(source_row.get("best_stage1_mismatch", np.nan)),
+        "best_stage2_mismatch": float(source_row.get("best_stage2_mismatch", np.nan)),
+        "best_ln_p_start_right": float(source_row.get("best_ln_p_start_right", np.nan)),
+        "best_spectral_success": bool(source_row.get("best_spectral_success", source_row.get("spectral_success", False))),
+        "best_mode_success": bool(source_row.get("best_mode_success", source_row.get("mode_success", False))),
+        "best_success": bool(source_row.get("best_success", source_row.get("success", False))),
+        "best_status": str(source_row.get("best_status", source_row.get("status", "validated"))),
+        "best_selection_metric": float(source_row.get("best_selection_metric", np.nan)),
+        "best_selection_metric_name": str(source_row.get("best_selection_metric_name", "locked_reference")),
+        "best_retry_index": float(source_row.get("best_retry_index", np.nan)),
+        "best_used_cr_half_window": float(source_row.get("best_used_cr_half_window", np.nan)),
+        "best_used_ci_half_window": float(source_row.get("best_used_ci_half_window", np.nan)),
+        "best_y_limit": float(source_row.get("best_y_limit", np.nan)),
+        "centroid_abs_y": float(source_row.get("centroid_abs_y", np.nan)),
+        "spread_abs_y": float(source_row.get("spread_abs_y", np.nan)),
+        "peak_y": float(source_row.get("peak_y", np.nan)),
+        "centroid_abs_y_center8": float(source_row.get("centroid_abs_y_center8", np.nan)),
+        "spread_abs_y_center8": float(source_row.get("spread_abs_y_center8", np.nan)),
+        "peak_y_center8": float(source_row.get("peak_y_center8", np.nan)),
+        "center8_mass_fraction": float(source_row.get("center8_mass_fraction", np.nan)),
+        "left_mass_fraction": float(source_row.get("left_mass_fraction", np.nan)),
+        "right_mass_fraction": float(source_row.get("right_mass_fraction", np.nan)),
+        "left_boundary_amp_fraction": float(source_row.get("left_boundary_amp_fraction", np.nan)),
+        "right_boundary_amp_fraction": float(source_row.get("right_boundary_amp_fraction", np.nan)),
+        "edge_amp_fraction_max": float(source_row.get("edge_amp_fraction_max", np.nan)),
+        "p_left_boundary_amp_fraction": float(source_row.get("p_left_boundary_amp_fraction", np.nan)),
+        "p_right_boundary_amp_fraction": float(source_row.get("p_right_boundary_amp_fraction", np.nan)),
+        "p_edge_amp_fraction_max": float(source_row.get("p_edge_amp_fraction_max", np.nan)),
+        "rho_left_boundary_amp_fraction": float(source_row.get("rho_left_boundary_amp_fraction", np.nan)),
+        "rho_right_boundary_amp_fraction": float(source_row.get("rho_right_boundary_amp_fraction", np.nan)),
+        "rho_edge_amp_fraction_max": float(source_row.get("rho_edge_amp_fraction_max", np.nan)),
+        "u_left_boundary_amp_fraction": float(source_row.get("u_left_boundary_amp_fraction", np.nan)),
+        "u_right_boundary_amp_fraction": float(source_row.get("u_right_boundary_amp_fraction", np.nan)),
+        "u_edge_amp_fraction_max": float(source_row.get("u_edge_amp_fraction_max", np.nan)),
+        "v_left_boundary_amp_fraction": float(source_row.get("v_left_boundary_amp_fraction", np.nan)),
+        "v_right_boundary_amp_fraction": float(source_row.get("v_right_boundary_amp_fraction", np.nan)),
+        "v_edge_amp_fraction_max": float(source_row.get("v_edge_amp_fraction_max", np.nan)),
+        "max_field_edge_amp_fraction": float(source_row.get("max_field_edge_amp_fraction", np.nan)),
+        "box_truncation_suspect_p": bool(source_row.get("box_truncation_suspect_p", False)),
+        "box_truncation_suspect_any_field": bool(source_row.get("box_truncation_suspect_any_field", False)),
+        "left_relative_mach": float(source_row.get("left_relative_mach", np.nan)),
+        "left_relative_regime": str(source_row.get("left_relative_regime", "")),
+        "right_relative_mach": float(source_row.get("right_relative_mach", np.nan)),
+        "right_relative_regime": str(source_row.get("right_relative_regime", "")),
+        "continuation_anchor": True,
+        "continuation_accepted": False,
+        "continuation_state": "",
+        "continuation_stop_reason": "",
+        "acceptance_mode": str(cfg["acceptance_mode"]),
+        "exception": "",
+    }
+    return summary_row, [], field_rows
+
+
 def evaluate_line(line: LineSpec, cfg: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[dict[str, object]]]:
     cr_points = load_digitized_long(Path(str(cfg["cr_points"])))
     ci_points = load_digitized_long(Path(str(cfg["ci_points"])))
@@ -690,19 +822,27 @@ def evaluate_line(line: LineSpec, cfg: dict[str, object]) -> tuple[list[dict[str
 
     alpha_values = list(line.alphas)
     anchor_index = next(idx for idx, alpha in enumerate(alpha_values) if np.isclose(alpha, line.anchor_alpha))
-
-    anchor_row, anchor_candidates, anchor_fields = evaluate_step(
-        line=line,
-        alpha=float(line.anchor_alpha),
-        target=targets[float(line.anchor_alpha)],
-        cfg=cfg,
-        direction="anchor",
-        step_index=0,
-        previous_alpha=None,
-        previous_cr=None,
-        previous_ci=None,
-        include_generic_seeds=bool(cfg["anchor_include_generic_seeds"]),
-    )
+    anchor_override = dict(cfg.get("anchor_overrides", {})).get(line_anchor_key(line.mach, line.anchor_alpha))
+    if anchor_override is not None:
+        anchor_row, anchor_candidates, anchor_fields = locked_anchor_step(
+            line=line,
+            target=targets[float(line.anchor_alpha)],
+            cfg=cfg,
+            anchor_override=anchor_override,
+        )
+    else:
+        anchor_row, anchor_candidates, anchor_fields = evaluate_step(
+            line=line,
+            alpha=float(line.anchor_alpha),
+            target=targets[float(line.anchor_alpha)],
+            cfg=cfg,
+            direction="anchor",
+            step_index=0,
+            previous_alpha=None,
+            previous_cr=None,
+            previous_ci=None,
+            include_generic_seeds=bool(cfg["anchor_include_generic_seeds"]),
+        )
     anchor_ok, anchor_reason = continuation_acceptance(anchor_row, cfg=cfg)
     anchor_row["continuation_accepted"] = bool(anchor_ok)
     anchor_row["continuation_state"] = "anchor_accepted" if anchor_ok else "anchor_rejected"
