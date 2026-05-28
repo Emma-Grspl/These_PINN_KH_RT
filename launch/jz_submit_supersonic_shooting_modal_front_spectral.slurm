@@ -59,6 +59,7 @@ export MAX_DELTA_CI="${MAX_DELTA_CI:-0.025}"
 export MAX_DELTA_CR="${MAX_DELTA_CR:-0.08}"
 export OUTPUT_STEM="${OUTPUT_STEM:-supersonic_shooting_modal_front_spectral_dense}"
 export MANUAL_LINE_SPECS="${MANUAL_LINE_SPECS:-}"
+export MANUAL_ONLY="${MANUAL_ONLY:-0}"
 export DRY_RUN="${DRY_RUN:-0}"
 
 echo "Densification spectrale locale du front modal supersonique sur ${SLURMD_NODENAME}"
@@ -66,6 +67,7 @@ echo "points=${POINTS_CSV}"
 echo "modal-summary=${MODAL_SUMMARY_CSV}"
 echo "workers=${WORKERS}"
 echo "frontier: backtrack=${BACKTRACK_POINTS} lookahead=${LOOKAHEAD_POINTS} frontier_subdivisions=${FRONTIER_SUBDIVISIONS} other_subdivisions=${OTHER_SUBDIVISIONS}"
+echo "manual-only=${MANUAL_ONLY}"
 echo "box: min=${MIN_Y_LIMIT} max=${MAX_Y_LIMIT} factor=${Y_LIMIT_FACTOR} amp=[${AMP_LOWER_BOUND},${AMP_UPPER_BOUND}]"
 echo "guards: stage1<=${MAX_STAGE1} err_ci<=${MAX_ERR_CI_ABS} delta_ci<=${MAX_DELTA_CI} delta_cr<=${MAX_DELTA_CR}"
 date
@@ -73,6 +75,9 @@ date
 EXTRA_ARGS=()
 if [ -n "${MANUAL_LINE_SPECS}" ]; then
   EXTRA_ARGS+=(--manual-line-specs ${MANUAL_LINE_SPECS})
+fi
+if [ "${MANUAL_ONLY}" = "1" ]; then
+  EXTRA_ARGS+=(--manual-only)
 fi
 if [ "${DRY_RUN}" = "1" ]; then
   EXTRA_ARGS+=(--dry-run)

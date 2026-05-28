@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--points-csv", type=Path, default=DEFAULT_POINTS_CSV)
     parser.add_argument("--modal-summary-csv", type=Path, default=DEFAULT_MODAL_SUMMARY_CSV)
     parser.add_argument("--manual-line-specs", type=str, nargs="*", default=[])
+    parser.add_argument("--manual-only", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--backtrack-points", type=int, default=1)
     parser.add_argument("--lookahead-points", type=int, default=4)
@@ -268,8 +269,13 @@ def main() -> None:
         other_subdivisions=int(args.other_subdivisions),
     )
     manual_specs = [parse_line_spec(raw) for raw in args.manual_line_specs]
-    line_specs = generated_specs + manual_specs
+    if args.manual_only:
+        line_specs = manual_specs
+    else:
+        line_specs = generated_specs + manual_specs
     if not line_specs:
+        if args.manual_only:
+            raise RuntimeError("Aucune line-spec manuelle fournie pour la densification locale.")
         raise RuntimeError("Aucun front modal detecte pour la densification locale.")
 
     line_specs_text = serialize_line_specs(line_specs)
@@ -282,6 +288,7 @@ def main() -> None:
     print(f"points_csv={args.points_csv}")
     print(f"modal_summary_csv={args.modal_summary_csv if args.modal_summary_csv.exists() else 'fallback:trusted_modal_from_points'}")
     print(f"frontiers={len(frontier_df)} line_specs={len(line_specs)}")
+    print(f"manual_only={bool(args.manual_only)}")
     print(
         f"densification: backtrack={int(args.backtrack_points)} "
         f"lookahead={int(args.lookahead_points)} "
