@@ -31,6 +31,8 @@ from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
 
 DEFAULT_POINTS_CSV = DEFAULT_OUTPUT_DIR / "supersonic_reference_core_local_spectral.csv"
 DEFAULT_MODAL_SUMMARY_CSV = DEFAULT_OUTPUT_DIR / "supersonic_shooting_modal_surface_core_summary.csv"
+DEFAULT_MODAL_REFERENCE_CSV = DEFAULT_OUTPUT_DIR / "supersonic_reference_core_local_modal.csv"
+DEFAULT_MODAL_FIELDS_CSV = DEFAULT_OUTPUT_DIR / "supersonic_reference_core_local_modal_fields.csv"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--points-csv", type=Path, default=DEFAULT_POINTS_CSV)
     parser.add_argument("--modal-summary-csv", type=Path, default=DEFAULT_MODAL_SUMMARY_CSV)
+    parser.add_argument("--modal-reference-csv", type=Path, default=DEFAULT_MODAL_REFERENCE_CSV)
+    parser.add_argument("--modal-fields-csv", type=Path, default=DEFAULT_MODAL_FIELDS_CSV)
     parser.add_argument("--manual-line-specs", type=str, nargs="*", default=[])
     parser.add_argument("--manual-only", action="store_true")
     parser.add_argument("--workers", type=int, default=1)
@@ -210,14 +214,55 @@ def serialize_line_specs(line_specs: list[LineSpec]) -> list[str]:
     ]
 
 
-def build_anchor_overrides(points_df: pd.DataFrame) -> dict[str, dict[str, object]]:
+def modal_reference_summary_row(row: pd.Series) -> dict[str, object]:
+    summary_row = dict(row)
+    summary_row["best_seed_name"] = str(summary_row.get("best_seed_name", "locked_modal_reference"))
+    summary_row["best_shooting_cr"] = float(summary_row.get("best_shooting_cr", summary_row["reference_cr"]))
+    summary_row["best_shooting_ci"] = float(summary_row.get("best_shooting_ci", summary_row["reference_ci"]))
+    summary_row["best_shooting_omega_i"] = float(
+        summary_row.get("best_shooting_omega_i", summary_row.get("reference_omega_i", float(row["alpha"]) * float(summary_row["best_shooting_ci"])))
+    )
+    summary_row["best_success"] = bool(summary_row.get("best_success", True))
+    summary_row["best_spectral_success"] = bool(summary_row.get("best_spectral_success", True))
+    summary_row["best_mode_success"] = bool(summary_row.get("best_mode_success", True))
+    summary_row["best_status"] = str(summary_row.get("best_status", "validated"))
+    return summary_row
+
+
+def build_anchor_overrides(
+    points_df: pd.DataFrame,
+    *,
+    modal_reference_csv: Path,
+    modal_fields_csv: Path,
+) -> dict[str, dict[str, object]]:
     source_cache: dict[str, pd.DataFrame] = {}
     fields_cache: dict[str, pd.DataFrame] = {}
     overrides: dict[str, dict[str, object]] = {}
 
+    if modal_reference_csv.exists():
+        modal_points_df = pd.read_csv(modal_reference_csv)
+        modal_fields_df = pd.read_csv(modal_fields_csv) if modal_fields_csv.exists() else pd.DataFrame()
+        for _, row in modal_points_df.iterrows():
+            key = line_anchor_key(float(row["Mach"]), float(row["alpha"]))
+            reference_fields = None
+            if not modal_fields_df.empty:
+                sub_fields = modal_fields_df[
+                    np.isclose(modal_fields_df["Mach"].to_numpy(dtype=float), float(row["Mach"]))
+                    & np.isclose(modal_fields_df["alpha"].to_numpy(dtype=float), float(row["alpha"]))
+                ].copy()
+                if not sub_fields.empty:
+                    reference_fields = sub_fields
+            overrides[key] = {
+                "summary_row": modal_reference_summary_row(row),
+                "reference_fields": reference_fields,
+            }
+
     for _, row in points_df.iterrows():
         source_csv = row.get("source_csv")
         if source_csv is None or pd.isna(source_csv):
+            continue
+        key = line_anchor_key(float(row["Mach"]), float(row["alpha"]))
+        if key in overrides:
             continue
         source_csv_path = Path(str(source_csv))
         if not source_csv_path.exists():
@@ -246,7 +291,7 @@ def build_anchor_overrides(points_df: pd.DataFrame) -> dict[str, dict[str, objec
             ].copy()
             if not sub_fields.empty:
                 reference_fields = sub_fields
-        overrides[line_anchor_key(float(row["Mach"]), float(row["alpha"]))] = {
+        overrides[key] = {
             "summary_row": summary_row,
             "reference_fields": reference_fields,
         }
@@ -305,7 +350,11 @@ def main() -> None:
 
     cfg = build_cfg(args)
     cfg["acceptance_mode"] = "spectral"
-    cfg["anchor_overrides"] = build_anchor_overrides(points_df)
+    cfg["anchor_overrides"] = build_anchor_overrides(
+        points_df,
+        modal_reference_csv=args.modal_reference_csv,
+        modal_fields_csv=args.modal_fields_csv,
+    )
 
     summary_rows: list[dict[str, object]] = []
     candidate_rows: list[dict[str, object]] = []
