@@ -235,7 +235,7 @@ def main() -> None:
     )
 
     model, history = train_fixed_mach_subsonic_pinn(cfg)
-    save_training_artifacts(model, history, cfg, output_dir=Path(cfg.output_dir))
+    save_training_artifacts(model, history, cfg)
 
     device = torch.device(cfg.device)
     eval_root = Path(cfg.output_dir)
