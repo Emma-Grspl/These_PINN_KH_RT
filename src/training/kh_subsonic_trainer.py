@@ -86,6 +86,8 @@ class KHSubsonicTrainingConfig:
     focus_half_width: float = 0.03
     low_alpha_sample_fraction: float = 0.0
     low_alpha_sample_threshold: float | None = None
+    high_alpha_sample_fraction: float = 0.0
+    high_alpha_sample_threshold: float | None = None
     neutral_fraction: float = 0.0
     ci_supervision_neutral_boost: float = 0.0
     neutral_half_width: float = 0.03
@@ -118,6 +120,7 @@ class KHSubsonicTrainingConfig:
     w_ci_smoothness: float = 0.0
     n_ci_spectral_grid: int = 129
     audit_ci_weight: float = 10.0
+    audit_p_weight: float = 0.0
     audit_mode_weight: float = 1.0
     audit_env_weight: float = 1.0
     audit_phase_weight: float = 0.5
@@ -190,6 +193,9 @@ class KHSubsonicTrainingConfig:
     mode_low_alpha_threshold: float = 0.25
     mode_low_alpha_weight: float = 1.0
     mode_low_alpha_audit_fraction: float = 0.6
+    mode_high_alpha_threshold: float | None = None
+    mode_high_alpha_weight: float = 1.0
+    mode_high_alpha_audit_fraction: float = 0.0
     initial_model_path: str | None = None
     initial_model_strict: bool = True
     output_dir: str = "model_saved/kh_subsonic_fixed_mach"
@@ -782,20 +788,52 @@ def build_mode_audit_alphas(cfg: KHSubsonicTrainingConfig) -> np.ndarray:
     n_total = max(int(cfg.n_mode_audit_alpha), 1)
     alpha_min = float(cfg.alpha_min)
     alpha_max = float(cfg.alpha_max)
-    threshold = float(np.clip(cfg.mode_low_alpha_threshold, alpha_min, alpha_max))
+    low_threshold = float(np.clip(cfg.mode_low_alpha_threshold, alpha_min, alpha_max))
+    high_threshold_raw = cfg.mode_high_alpha_threshold
+    high_threshold = alpha_max if high_threshold_raw is None else float(np.clip(high_threshold_raw, alpha_min, alpha_max))
 
-    if n_total == 1 or threshold <= alpha_min or cfg.mode_low_alpha_audit_fraction <= 0.0:
+    use_low = low_threshold > alpha_min and float(cfg.mode_low_alpha_audit_fraction) > 0.0
+    use_high = high_threshold < alpha_max and float(cfg.mode_high_alpha_audit_fraction) > 0.0
+    if n_total == 1 or (not use_low and not use_high):
         return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
-    if threshold >= alpha_max:
+    if use_low and use_high and high_threshold <= low_threshold:
         return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
 
-    n_low = int(round(float(cfg.mode_low_alpha_audit_fraction) * n_total))
-    n_low = min(max(n_low, 1), n_total - 1)
-    n_high = n_total - n_low
+    n_low = 0
+    n_high = 0
+    if use_low:
+        n_low = int(round(float(cfg.mode_low_alpha_audit_fraction) * n_total))
+        n_low = min(max(n_low, 1), n_total - 1)
+    if use_high:
+        remaining_for_high = n_total - n_low
+        if remaining_for_high <= 0:
+            return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
+        n_high = int(round(float(cfg.mode_high_alpha_audit_fraction) * n_total))
+        n_high = min(max(n_high, 1), remaining_for_high)
 
-    low = np.linspace(alpha_min, threshold, n_low, endpoint=False, dtype=float)
-    high = np.linspace(threshold, alpha_max, n_high, dtype=float)
-    grid = np.concatenate([low, high])
+    n_mid = n_total - n_low - n_high
+    if n_mid < 0:
+        overflow = -n_mid
+        trim_high = min(n_high - 1 if use_high else 0, overflow)
+        n_high -= trim_high
+        overflow -= trim_high
+        trim_low = min(n_low - 1 if use_low else 0, overflow)
+        n_low -= trim_low
+        n_mid = n_total - n_low - n_high
+    if n_mid < 0:
+        return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
+
+    chunks: list[np.ndarray] = []
+    if n_low > 0:
+        chunks.append(np.linspace(alpha_min, low_threshold, n_low, endpoint=False, dtype=float))
+    if n_mid > 0:
+        mid_min = low_threshold if use_low else alpha_min
+        mid_max = high_threshold if use_high else alpha_max
+        chunks.append(np.linspace(mid_min, mid_max, n_mid, endpoint=not use_high, dtype=float))
+    if n_high > 0:
+        chunks.append(np.linspace(high_threshold, alpha_max, n_high, dtype=float))
+
+    grid = np.concatenate(chunks) if chunks else np.empty(0, dtype=float)
     if grid.shape[0] != n_total:
         return np.linspace(alpha_min, alpha_max, n_total, dtype=float)
     return grid
@@ -803,9 +841,12 @@ def build_mode_audit_alphas(cfg: KHSubsonicTrainingConfig) -> np.ndarray:
 
 def mode_alpha_weights(alphas: np.ndarray, cfg: KHSubsonicTrainingConfig) -> np.ndarray:
     weights = np.ones_like(alphas, dtype=float)
-    threshold = float(cfg.mode_low_alpha_threshold)
+    low_threshold = float(cfg.mode_low_alpha_threshold)
     if cfg.mode_low_alpha_weight > 1.0:
-        weights[alphas <= threshold] = float(cfg.mode_low_alpha_weight)
+        weights[alphas <= low_threshold] = float(cfg.mode_low_alpha_weight)
+    if cfg.mode_high_alpha_threshold is not None and cfg.mode_high_alpha_weight > 1.0:
+        high_threshold = float(cfg.mode_high_alpha_threshold)
+        weights[alphas >= high_threshold] = np.maximum(weights[alphas >= high_threshold], float(cfg.mode_high_alpha_weight))
     return weights
 
 
@@ -1101,12 +1142,14 @@ def audit_ci_and_mode(
         "audit_phase_rel_max": float(phase_rel_err.max()),
         "audit_peak_shift_mean": float(peak_shift_err.mean()),
         "audit_peak_shift_max": float(peak_shift_err.max()),
+        "audit_p_rel_weighted_mean": weighted_mean(mode_rel_err, mode_weights),
         "audit_env_rel_weighted_mean": weighted_mean(env_rel_err, mode_weights),
         "audit_phase_rel_weighted_mean": weighted_mean(phase_rel_err, mode_weights),
         "audit_peak_shift_weighted_mean": weighted_mean(peak_shift_err, mode_weights),
     }
     metrics["audit_checkpoint_metric"] = (
         cfg.audit_ci_weight * metrics["audit_ci_mae"]
+        + cfg.audit_p_weight * metrics["audit_p_rel_weighted_mean"]
         + cfg.audit_env_weight * metrics["audit_env_rel_weighted_mean"]
         + cfg.audit_phase_weight * metrics["audit_phase_rel_weighted_mean"]
         + cfg.audit_peak_weight * metrics["audit_peak_shift_weighted_mean"]
@@ -1302,6 +1345,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             low_alpha_fraction=cfg.low_alpha_sample_fraction,
             low_alpha_threshold=cfg.low_alpha_sample_threshold,
+            high_alpha_fraction=cfg.high_alpha_sample_fraction,
+            high_alpha_threshold=cfg.high_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1317,6 +1362,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             low_alpha_fraction=cfg.low_alpha_sample_fraction,
             low_alpha_threshold=cfg.low_alpha_sample_threshold,
+            high_alpha_fraction=cfg.high_alpha_sample_fraction,
+            high_alpha_threshold=cfg.high_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1331,6 +1378,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             low_alpha_fraction=cfg.low_alpha_sample_fraction,
             low_alpha_threshold=cfg.low_alpha_sample_threshold,
+            high_alpha_fraction=cfg.high_alpha_sample_fraction,
+            high_alpha_threshold=cfg.high_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1352,6 +1401,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             low_alpha_fraction=cfg.low_alpha_sample_fraction,
             low_alpha_threshold=cfg.low_alpha_sample_threshold,
+            high_alpha_fraction=cfg.high_alpha_sample_fraction,
+            high_alpha_threshold=cfg.high_alpha_sample_threshold,
             neutral_fraction=stage_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,
@@ -1368,6 +1419,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             focus_half_width=cfg.focus_half_width,
             low_alpha_fraction=cfg.low_alpha_sample_fraction,
             low_alpha_threshold=cfg.low_alpha_sample_threshold,
+            high_alpha_fraction=cfg.high_alpha_sample_fraction,
+            high_alpha_threshold=cfg.high_alpha_sample_threshold,
             neutral_fraction=ci_supervision_neutral_fraction,
             neutral_alpha=neutral_alpha,
             neutral_half_width=cfg.neutral_half_width,

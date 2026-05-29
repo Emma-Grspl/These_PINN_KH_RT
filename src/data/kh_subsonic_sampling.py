@@ -131,6 +131,8 @@ def sample_alpha_adaptive_batch(
     focus_half_width: float,
     low_alpha_fraction: float = 0.0,
     low_alpha_threshold: float | None = None,
+    high_alpha_fraction: float = 0.0,
+    high_alpha_threshold: float | None = None,
     neutral_fraction: float = 0.0,
     neutral_alpha: float | None = None,
     neutral_half_width: float = 0.0,
@@ -154,7 +156,13 @@ def sample_alpha_adaptive_batch(
     if low_alpha_threshold is None or float(low_alpha_threshold) <= float(alpha_min):
         n_low = 0
     n_low = min(max(n_low, 0), remaining)
-    n_uniform = n_points - n_focus - n_neutral - n_low
+    remaining -= n_low
+
+    n_high = int(round(high_alpha_fraction * n_points))
+    if high_alpha_threshold is None or float(high_alpha_threshold) >= float(alpha_max):
+        n_high = 0
+    n_high = min(max(n_high, 0), remaining)
+    n_uniform = n_points - n_focus - n_neutral - n_low - n_high
 
     chunks: list[torch.Tensor] = []
     if n_uniform > 0:
@@ -192,6 +200,17 @@ def sample_alpha_adaptive_batch(
                 n_low,
                 alpha_min=alpha_min,
                 alpha_max=alpha_high,
+                device=device,
+            )
+        )
+
+    if n_high > 0:
+        alpha_low = max(alpha_min, float(high_alpha_threshold))
+        chunks.append(
+            sample_alpha_batch(
+                n_high,
+                alpha_min=alpha_low,
+                alpha_max=alpha_max,
                 device=device,
             )
         )

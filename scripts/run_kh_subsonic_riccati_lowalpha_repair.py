@@ -241,10 +241,12 @@ def evaluate_candidate(
     y_max: float,
     y_common: int,
     low_alpha_threshold: float,
+    alpha_min_override: float | None = None,
+    alpha_max_override: float | None = None,
 ) -> tuple[dict[str, float | str], pd.DataFrame]:
     candidate = load_candidate(name, run_dir, device)
-    alpha_min = float(candidate.config["alpha_min"])
-    alpha_max = float(candidate.config["alpha_max"])
+    alpha_min = float(candidate.config["alpha_min"]) if alpha_min_override is None else float(alpha_min_override)
+    alpha_max = float(candidate.config["alpha_max"]) if alpha_max_override is None else float(alpha_max_override)
     alpha_values_ci = np.linspace(alpha_min, alpha_max, int(num_alpha_ci), dtype=float)
     alpha_values_modes = np.linspace(alpha_min, alpha_max, int(num_alpha_modes), dtype=float)
 
