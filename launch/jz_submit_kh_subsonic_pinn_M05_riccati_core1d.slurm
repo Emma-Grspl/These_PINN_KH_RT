@@ -40,6 +40,7 @@ echo "Alpha range=[${ALPHA_MIN:-0.05},${ALPHA_MAX:-0.8}] low-alpha-threshold=${L
 echo "Weights: ci=${CI_SUPERVISION_WEIGHT:-5.0} q=${Q_SUPERVISION_WEIGHT:-5.0} gamma=${GAMMA_SUPERVISION_WEIGHT:-3.0} anchor=${RICCATI_ANCHOR_WEIGHT:-2.0} bc_q=${BOUNDARY_Q_WEIGHT:-10.0} shoot=${SHOOTING_MATCH_WEIGHT:-12.0}"
 echo "Sampling: focus_fraction=${FOCUS_FRACTION:-0.50} low_alpha_sample_fraction=${LOW_ALPHA_SAMPLE_FRACTION:-0.30}"
 echo "Checkpoint every=${CHECKPOINT_EVERY:-250}"
+echo "Skip training=${SKIP_TRAINING:-0}"
 echo "CPUs par tache: ${SLURM_CPUS_PER_TASK}"
 date
 nvidia-smi || true
@@ -47,6 +48,9 @@ nvidia-smi || true
 EXTRA_ARGS=()
 if [ -n "${WARMSTART_CHECKPOINT:-}" ]; then
   EXTRA_ARGS+=(--warmstart-checkpoint "${WARMSTART_CHECKPOINT}")
+fi
+if [ "${SKIP_TRAINING:-0}" = "1" ]; then
+  EXTRA_ARGS+=(--skip-training)
 fi
 
 srun python3 scripts/run_kh_subsonic_riccati_core1d.py \

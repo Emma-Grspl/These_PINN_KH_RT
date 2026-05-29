@@ -35,6 +35,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--warmstart-run-dir", type=Path, required=True)
     parser.add_argument("--warmstart-checkpoint", type=Path, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
+    parser.add_argument("--skip-training", action="store_true")
     parser.add_argument("--epochs", type=int, default=1800)
     parser.add_argument("--checkpoint-every", type=int, default=250)
     parser.add_argument("--learning-rate", type=float, default=2e-4)
@@ -234,8 +235,16 @@ def main() -> None:
         f"low_alpha_fraction={cfg.low_alpha_sample_fraction:.2f} low_alpha_threshold={cfg.low_alpha_sample_threshold:.3f}"
     )
 
-    model, history = train_fixed_mach_subsonic_pinn(cfg)
-    save_training_artifacts(model, history, cfg)
+    if args.skip_training:
+        model_best_path = Path(cfg.output_dir) / "model_best.pt"
+        if not model_best_path.exists():
+            raise FileNotFoundError(
+                f"Skip-training requested but post-train model is missing: {model_best_path}"
+            )
+        print(f"Skip training enabled; reusing existing post-train model at {model_best_path}")
+    else:
+        model, history = train_fixed_mach_subsonic_pinn(cfg)
+        save_training_artifacts(model, history, cfg)
 
     device = torch.device(cfg.device)
     eval_root = Path(cfg.output_dir)
