@@ -44,6 +44,23 @@ class Candidate:
     mach: float
 
 
+def resolve_candidate_state_path(run_dir: Path) -> Path:
+    model_best = run_dir / "model_best.pt"
+    if model_best.exists():
+        return model_best
+
+    checkpoints = sorted(
+        run_dir.glob("checkpoint_epoch_*.pt"),
+        key=lambda path: int(path.stem.split("_")[-1]),
+    )
+    if checkpoints:
+        return checkpoints[-1]
+
+    raise FileNotFoundError(
+        f"No model artifact found in {run_dir}. Expected model_best.pt or checkpoint_epoch_*.pt."
+    )
+
+
 def normalize_full_mode(
     y: np.ndarray,
     u: np.ndarray,
@@ -98,7 +115,8 @@ def compute_visible_xlim(y: np.ndarray, fields: list[np.ndarray], *, threshold_r
 def load_candidate(name: str, run_dir: Path, device: torch.device) -> Candidate:
     config = pd.read_csv(run_dir / "config.csv").iloc[0]
     model = build_fixed_mach_model_from_config(config)
-    state_dict = torch.load(run_dir / "model_best.pt", map_location=device)
+    state_path = resolve_candidate_state_path(run_dir)
+    state_dict = torch.load(state_path, map_location=device)
     load_fixed_mach_state_dict_compat(model, state_dict)
     model.to(device)
     model.eval()
