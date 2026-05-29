@@ -19,7 +19,6 @@ from scripts.run_kh_subsonic_riccati_lowalpha_repair import (  # noqa: E402
     _maybe_int,
     evaluate_candidate,
     load_warmstart_checkpoint,
-    summarize_regimes,
 )
 from src.training.kh_subsonic_trainer import (  # noqa: E402
     KHSubsonicTrainingConfig,
@@ -251,7 +250,7 @@ def main() -> None:
     warm_eval_root = eval_root / "warmstart_eval"
     post_eval_root = eval_root / "posttrain_eval"
 
-    warm_summary, warm_mode_df = evaluate_candidate(
+    warm_summary, warm_regimes_df = evaluate_candidate(
         name="warmstart",
         run_dir=Path(args.warmstart_run_dir),
         device=device,
@@ -264,7 +263,7 @@ def main() -> None:
         y_common=args.y_common,
         low_alpha_threshold=args.low_alpha_threshold,
     )
-    post_summary, post_mode_df = evaluate_candidate(
+    post_summary, post_regimes_df = evaluate_candidate(
         name="posttrain",
         run_dir=Path(cfg.output_dir),
         device=device,
@@ -322,11 +321,11 @@ def main() -> None:
     improvement_path = eval_root / "core1d_repair_improvement.csv"
     lowalpha_summary.to_csv(lowalpha_summary_path, index=False)
     improvement_df.to_csv(improvement_path, index=False)
-    summarize_regimes(warm_mode_df, cfg.mode_low_alpha_threshold).to_csv(
+    warm_regimes_df.to_csv(
         warm_eval_root / "modes" / "mode_regime_summary.csv",
         index=False,
     )
-    summarize_regimes(post_mode_df, cfg.mode_low_alpha_threshold).to_csv(
+    post_regimes_df.to_csv(
         post_eval_root / "modes" / "mode_regime_summary.csv",
         index=False,
     )
