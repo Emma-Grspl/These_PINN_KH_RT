@@ -33,6 +33,7 @@ echo "Tracking modal surface supersonique sur ${SLURMD_NODENAME}"
 echo "points=${POINTS_CSV:-assets/classic_supersonic/shooting/supersonic_reference_core_local_spectral.csv}"
 echo "anchors=${ANCHOR_CSV:-assets/classic_supersonic/shooting/supersonic_reference_core_local_modal.csv}"
 echo "mode_distance<=${MAX_MODE_DISTANCE:-0.35} stage1<=${MAX_STAGE1:-0.05} stage2<=${MAX_STAGE2:-0.1}"
+echo "cross-mach-alpha-tolerance=${CROSS_MACH_ALPHA_TOLERANCE:-0.02}"
 date
 
 srun python3 scripts/track_supersonic_shooting_modal_surface.py \
@@ -59,6 +60,7 @@ srun python3 scripts/track_supersonic_shooting_modal_surface.py \
   --mode-distance-weight "${MODE_DISTANCE_WEIGHT:-0.60}" \
   --mode-mask-ratio "${MODE_MASK_RATIO:-0.15}" \
   --mode-common-points "${MODE_COMMON_POINTS:-801}" \
+  --cross-mach-alpha-tolerance "${CROSS_MACH_ALPHA_TOLERANCE:-0.02}" \
   --max-mode-distance "${MAX_MODE_DISTANCE:-0.35}" \
   --max-stage1 "${MAX_STAGE1:-0.05}" \
   --max-stage2 "${MAX_STAGE2:-0.10}" \

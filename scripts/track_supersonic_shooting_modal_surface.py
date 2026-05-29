@@ -82,6 +82,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-distance-weight", type=float, default=0.60)
     parser.add_argument("--mode-mask-ratio", type=float, default=0.15)
     parser.add_argument("--mode-common-points", type=int, default=801)
+    parser.add_argument("--cross-mach-alpha-tolerance", type=float, default=2.0e-2)
     parser.add_argument("--max-mode-distance", type=float, default=0.35)
     parser.add_argument("--max-stage1", type=float, default=5.0e-2)
     parser.add_argument("--max-stage2", type=float, default=1.0e-1)
@@ -118,6 +119,7 @@ def build_cfg(args: argparse.Namespace) -> dict[str, object]:
         "mode_distance_weight": float(args.mode_distance_weight),
         "mode_mask_ratio": float(args.mode_mask_ratio),
         "mode_common_points": int(args.mode_common_points),
+        "cross_mach_alpha_tolerance": float(args.cross_mach_alpha_tolerance),
         "max_mode_distance": float(args.max_mode_distance),
         "max_stage1": float(args.max_stage1),
         "max_stage2": float(args.max_stage2),
@@ -154,7 +156,7 @@ def continuity_penalty(
     )
 
 
-def build_neighbors(points_df: pd.DataFrame) -> dict[PointKey, set[PointKey]]:
+def build_neighbors(points_df: pd.DataFrame, *, cross_mach_alpha_tolerance: float) -> dict[PointKey, set[PointKey]]:
     neighbors: dict[PointKey, set[PointKey]] = {}
     work = points_df[["Mach", "alpha"]].drop_duplicates().copy()
     for _, row in work.iterrows():
@@ -167,12 +169,38 @@ def build_neighbors(points_df: pd.DataFrame) -> dict[PointKey, set[PointKey]]:
             neighbors[left].add(right)
             neighbors[right].add(left)
 
-    for alpha, sub in work.groupby("alpha", sort=True):
-        ordered = sub.sort_values("Mach").reset_index(drop=True)
-        keys = [point_key(row) for _, row in ordered.iterrows()]
-        for lower, upper in zip(keys[:-1], keys[1:]):
-            neighbors[lower].add(upper)
-            neighbors[upper].add(lower)
+    unique_machs = sorted(work["Mach"].astype(float).unique().tolist())
+    tol = float(cross_mach_alpha_tolerance)
+    if tol > 0.0 and len(unique_machs) >= 2:
+        by_mach = {
+            float(mach): work[np.isclose(work["Mach"].to_numpy(dtype=float), float(mach))].sort_values("alpha").reset_index(drop=True)
+            for mach in unique_machs
+        }
+        for lower_mach, upper_mach in zip(unique_machs[:-1], unique_machs[1:]):
+            lower_df = by_mach[float(lower_mach)]
+            upper_df = by_mach[float(upper_mach)]
+            lower_alphas = lower_df["alpha"].to_numpy(dtype=float)
+            upper_alphas = upper_df["alpha"].to_numpy(dtype=float)
+
+            for _, lower_row in lower_df.iterrows():
+                alpha = float(lower_row["alpha"])
+                idx = int(np.argmin(np.abs(upper_alphas - alpha)))
+                delta = abs(float(upper_alphas[idx]) - alpha)
+                if delta <= tol:
+                    lower_key = point_key(lower_row)
+                    upper_key = point_key(upper_df.iloc[idx])
+                    neighbors[lower_key].add(upper_key)
+                    neighbors[upper_key].add(lower_key)
+
+            for _, upper_row in upper_df.iterrows():
+                alpha = float(upper_row["alpha"])
+                idx = int(np.argmin(np.abs(lower_alphas - alpha)))
+                delta = abs(float(lower_alphas[idx]) - alpha)
+                if delta <= tol:
+                    upper_key = point_key(upper_row)
+                    lower_key = point_key(lower_df.iloc[idx])
+                    neighbors[upper_key].add(lower_key)
+                    neighbors[lower_key].add(upper_key)
 
     return neighbors
 
@@ -647,7 +675,7 @@ def main() -> None:
     output_dir = DEFAULT_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    neighbors = build_neighbors(points_df)
+    neighbors = build_neighbors(points_df, cross_mach_alpha_tolerance=float(cfg["cross_mach_alpha_tolerance"]))
     accepted = load_anchor_states(anchor_df, anchor_fields_df, cfg)
     anchor_keys = {point_key(row) for _, row in anchor_df.iterrows()}
 
@@ -659,6 +687,7 @@ def main() -> None:
         f"guards: stage1<={float(cfg['max_stage1']):.3e} stage2<={float(cfg['max_stage2']):.3e} "
         f"mode_distance<={float(cfg['max_mode_distance']):.3f}"
     )
+    print(f"cross-mach-alpha-tolerance={float(cfg['cross_mach_alpha_tolerance']):.4f}")
 
     candidate_rows: list[dict[str, object]] = []
     field_rows: list[dict[str, object]] = []
