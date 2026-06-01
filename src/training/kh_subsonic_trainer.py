@@ -43,6 +43,10 @@ class KHSubsonicTrainingConfig:
     mach: float = 0.5
     alpha_min: float = 0.05
     alpha_max: float = 0.85
+    sampling_alpha_min: float | None = None
+    sampling_alpha_max: float | None = None
+    audit_alpha_min: float | None = None
+    audit_alpha_max: float | None = None
     epochs: int = 5000
     learning_rate: float = 1e-3
     hidden_dim: int = 128
@@ -213,6 +217,22 @@ class KingOfTheHill:
             self.best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             return True
         return False
+
+
+def sampling_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
+    alpha_min = float(cfg.alpha_min) if cfg.sampling_alpha_min is None else float(cfg.sampling_alpha_min)
+    alpha_max = float(cfg.alpha_max) if cfg.sampling_alpha_max is None else float(cfg.sampling_alpha_max)
+    if alpha_max <= alpha_min:
+        raise ValueError(f"Invalid sampling alpha bounds: [{alpha_min}, {alpha_max}]")
+    return alpha_min, alpha_max
+
+
+def audit_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
+    alpha_min = float(cfg.alpha_min) if cfg.audit_alpha_min is None else float(cfg.audit_alpha_min)
+    alpha_max = float(cfg.alpha_max) if cfg.audit_alpha_max is None else float(cfg.audit_alpha_max)
+    if alpha_max <= alpha_min:
+        raise ValueError(f"Invalid audit alpha bounds: [{alpha_min}, {alpha_max}]")
+    return alpha_min, alpha_max
 
 
 def safe_torch_save(state_dict: dict, path: Path) -> None:
@@ -786,8 +806,7 @@ def build_riccati_anchor_alphas(
 
 def build_mode_audit_alphas(cfg: KHSubsonicTrainingConfig) -> np.ndarray:
     n_total = max(int(cfg.n_mode_audit_alpha), 1)
-    alpha_min = float(cfg.alpha_min)
-    alpha_max = float(cfg.alpha_max)
+    alpha_min, alpha_max = audit_alpha_bounds(cfg)
     low_threshold = float(np.clip(cfg.mode_low_alpha_threshold, alpha_min, alpha_max))
     high_threshold_raw = cfg.mode_high_alpha_threshold
     high_threshold = alpha_max if high_threshold_raw is None else float(np.clip(high_threshold_raw, alpha_min, alpha_max))
@@ -876,8 +895,9 @@ def build_q_supervision_alphas(
     if count <= 0:
         return alpha_ref[:0]
 
-    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(cfg.alpha_min)), float(cfg.alpha_max))
-    n_low = count // 2 if threshold > float(cfg.alpha_min) else 0
+    alpha_min, alpha_max = sampling_alpha_bounds(cfg)
+    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(alpha_min)), float(alpha_max))
+    n_low = count // 2 if threshold > float(alpha_min) else 0
     n_base = count - n_low
 
     chunks: list[torch.Tensor] = []
@@ -889,7 +909,7 @@ def build_q_supervision_alphas(
             chunks.append(alpha_ref[perm])
     if n_low > 0:
         low = torch.rand(n_low, 1, device=device, dtype=alpha_ref.dtype)
-        low = float(cfg.alpha_min) + (threshold - float(cfg.alpha_min)) * low
+        low = float(alpha_min) + (threshold - float(alpha_min)) * low
         chunks.append(low)
 
     alpha_samples = torch.cat(chunks, dim=0)
@@ -910,8 +930,9 @@ def build_gamma_supervision_alphas(
     if count <= 0:
         return alpha_ref[:0]
 
-    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(cfg.alpha_min)), float(cfg.alpha_max))
-    n_low = count // 2 if threshold > float(cfg.alpha_min) else 0
+    alpha_min, alpha_max = sampling_alpha_bounds(cfg)
+    threshold = min(max(float(cfg.mode_low_alpha_threshold), float(alpha_min)), float(alpha_max))
+    n_low = count // 2 if threshold > float(alpha_min) else 0
     n_base = count - n_low
 
     chunks: list[torch.Tensor] = []
@@ -923,7 +944,7 @@ def build_gamma_supervision_alphas(
             chunks.append(alpha_ref[perm])
     if n_low > 0:
         low = torch.rand(n_low, 1, device=device, dtype=alpha_ref.dtype)
-        low = float(cfg.alpha_min) + (threshold - float(cfg.alpha_min)) * low
+        low = float(alpha_min) + (threshold - float(alpha_min)) * low
         chunks.append(low)
 
     alpha_samples = torch.cat(chunks, dim=0)
@@ -1167,6 +1188,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     device = torch.device(cfg.device)
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    train_alpha_min, train_alpha_max = sampling_alpha_bounds(cfg)
+    audit_alpha_min, audit_alpha_max = audit_alpha_bounds(cfg)
 
     use_classic_ci_supervision = bool(cfg.enable_classic_ci_supervision)
     use_classic_mode_audit = bool(cfg.enable_classic_mode_audit)
@@ -1195,8 +1218,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     if use_classic_references:
         reference_cache = SubsonicReferenceCache.build(
             mach=cfg.mach,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=audit_alpha_min,
+            alpha_max=audit_alpha_max,
             num_alpha=cfg.n_reference_alpha,
         )
 
@@ -1338,8 +1361,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
         alpha_interior = sample_alpha_adaptive_batch(
             cfg.n_interior,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=train_alpha_min,
+            alpha_max=train_alpha_max,
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
@@ -1355,8 +1378,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         xi_left, xi_right = sample_boundary_points(cfg.n_boundary, device=device)
         alpha_boundary = sample_alpha_adaptive_batch(
             cfg.n_boundary,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=train_alpha_min,
+            alpha_max=train_alpha_max,
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
@@ -1371,8 +1394,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
         alpha_ref = sample_alpha_adaptive_batch(
             cfg.n_anchor_alpha,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=train_alpha_min,
+            alpha_max=train_alpha_max,
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
@@ -1394,8 +1417,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
         alpha_norm = sample_alpha_adaptive_batch(
             cfg.n_norm_interior,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=train_alpha_min,
+            alpha_max=train_alpha_max,
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
@@ -1412,8 +1435,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         ci_supervision_neutral_fraction = min(1.0, stage_neutral_fraction + max(cfg.ci_supervision_neutral_boost, 0.0))
         alpha_supervision = sample_alpha_adaptive_batch(
             cfg.n_alpha_supervision,
-            alpha_min=cfg.alpha_min,
-            alpha_max=cfg.alpha_max,
+            alpha_min=train_alpha_min,
+            alpha_max=train_alpha_max,
             focus_alphas=focus_alphas,
             focus_fraction=cfg.focus_fraction,
             focus_half_width=cfg.focus_half_width,
@@ -1467,8 +1490,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             or cfg.w_ci_smoothness > 0.0
         ):
             alpha_spectral = torch.linspace(
-                float(cfg.alpha_min),
-                float(cfg.alpha_max),
+                float(train_alpha_min),
+                float(train_alpha_max),
                 max(int(cfg.n_ci_spectral_grid), 3),
                 device=device,
                 dtype=xi_interior.dtype,
@@ -1487,7 +1510,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 loss_ci_neutrality = torch.mean(ci_neutral.pow(2))
 
             if cfg.w_ci_low_alpha_zero > 0.0:
-                alpha_low_t = torch.tensor([[float(cfg.alpha_min)]], device=device, dtype=xi_interior.dtype)
+                alpha_low_t = torch.tensor([[float(train_alpha_min)]], device=device, dtype=xi_interior.dtype)
                 ci_low = model.get_ci(alpha_low_t)
                 loss_ci_low_alpha_zero = torch.mean(ci_low.pow(2))
 
@@ -1932,7 +1955,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "ci_supervision_neutral_fraction": float(ci_supervision_neutral_fraction),
             "stage2_started": int(stage2_started),
             "mapping_scale": float(model.get_mapping_scale().item()),
-            "ci_mid": float(model.get_ci(torch.tensor([[0.5 * (cfg.alpha_min + cfg.alpha_max)]], device=device)).item()),
+            "ci_mid": float(model.get_ci(torch.tensor([[0.5 * (train_alpha_min + train_alpha_max)]], device=device)).item()),
         }
 
         should_audit = use_classic_mode_audit and cfg.audit_every > 0 and (epoch == 1 or epoch % cfg.audit_every == 0)

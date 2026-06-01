@@ -103,8 +103,12 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
 
     return KHSubsonicTrainingConfig(
         mach=float(warm_config["mach"]),
-        alpha_min=float(args.alpha_min),
-        alpha_max=float(args.alpha_max),
+        alpha_min=float(warm_config["alpha_min"]),
+        alpha_max=float(warm_config["alpha_max"]),
+        sampling_alpha_min=float(args.alpha_min),
+        sampling_alpha_max=float(args.alpha_max),
+        audit_alpha_min=float(args.alpha_min),
+        audit_alpha_max=float(args.alpha_max),
         epochs=int(args.epochs),
         learning_rate=float(args.learning_rate),
         hidden_dim=int(warm_config["hidden_dim"]),
@@ -291,7 +295,10 @@ def main() -> None:
 
     print("Edge-focused subsonic Riccati mode repair")
     print(f"warm start={checkpoint}")
-    print(f"alpha-range=[{cfg.alpha_min:.3f}, {cfg.alpha_max:.3f}]")
+    print(
+        f"alpha-range(model)=[{cfg.alpha_min:.3f}, {cfg.alpha_max:.3f}] "
+        f"active=[{float(args.alpha_min):.3f}, {float(args.alpha_max):.3f}]"
+    )
     print(
         f"epochs={cfg.epochs} lr={cfg.learning_rate:.2e} mode_lr={cfg.mode_branch_lr:.2e} "
         f"freeze_ci={int(cfg.freeze_ci)}"
