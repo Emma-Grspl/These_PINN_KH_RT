@@ -47,7 +47,14 @@ def build_parser() -> argparse.ArgumentParser:
             "avec parallelisme CPU et metriques de succes."
         )
     )
-    parser.add_argument("--points", type=str, nargs="+", required=True, help="Liste de couples alpha:Mach.")
+    parser.add_argument("--points", type=str, nargs="*", default=None, help="Liste de couples alpha:Mach.")
+    parser.add_argument("--mach", type=float, default=None, help="Mach fixe si on fournit seulement une liste d'alpha.")
+    parser.add_argument(
+        "--alphas",
+        type=str,
+        default=None,
+        help="Liste CSV d'alpha a evaluer pour un Mach fixe. Ex: 0.125,0.1375,0.15",
+    )
     parser.add_argument("--workers", type=int, default=1)
     parser.add_argument("--match-y", type=float, default=1.0)
     parser.add_argument("--use-mapping", action="store_true", default=True)
@@ -77,6 +84,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_alpha_csv(raw_value: str) -> list[float]:
+    values: list[float] = []
+    seen: set[float] = set()
+    for part in raw_value.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        alpha = round(float(token), 8)
+        if alpha in seen:
+            continue
+        seen.add(alpha)
+        values.append(float(token))
+    if not values:
+        raise ValueError("La liste d'alpha est vide.")
+    return values
+
+
 def parse_points(values: list[str]) -> list[tuple[float, float]]:
     out: list[tuple[float, float]] = []
     seen: set[tuple[float, float]] = set()
@@ -88,6 +112,14 @@ def parse_points(values: list[str]) -> list[tuple[float, float]]:
         seen.add(key)
         out.append((float(alpha_raw), float(mach_raw)))
     return out
+
+
+def resolve_points(*, raw_points: list[str] | None, mach: float | None, alphas_csv: str | None) -> list[tuple[float, float]]:
+    if raw_points:
+        return parse_points(list(raw_points))
+    if mach is None or alphas_csv is None:
+        raise ValueError("Fournir soit --points, soit --mach avec --alphas.")
+    return [(float(alpha), float(mach)) for alpha in parse_alpha_csv(str(alphas_csv))]
 
 
 def generic_seed_list() -> list[tuple[str, float, float]]:
@@ -592,7 +624,7 @@ def main() -> None:
     args = build_parser().parse_args()
     output_dir = DEFAULT_OUTPUT_DIR
     output_dir.mkdir(parents=True, exist_ok=True)
-    points = parse_points(list(args.points))
+    points = resolve_points(raw_points=args.points, mach=args.mach, alphas_csv=args.alphas)
     cfg = {
         "match_y": float(args.match_y),
         "use_mapping": bool(args.use_mapping),
@@ -662,6 +694,7 @@ def main() -> None:
     summary_path = output_dir / f"{args.output_stem}_summary.csv"
     candidates_path = output_dir / f"{args.output_stem}_candidates.csv"
     fields_path = output_dir / f"{args.output_stem}_fields.csv"
+    points_path = output_dir / f"{args.output_stem}_points.txt"
     status_map_path = output_dir / f"{args.output_stem}_status_map.png"
     diagnostics_path = output_dir / f"{args.output_stem}_diagnostics.png"
     modes_pdf_path = output_dir / f"{args.output_stem}_modes.pdf"
@@ -669,6 +702,7 @@ def main() -> None:
     summary_df.to_csv(summary_path, index=False)
     candidates_df.to_csv(candidates_path, index=False)
     fields_df.to_csv(fields_path, index=False)
+    points_path.write_text("\n".join(f"{alpha:.6f}:{mach:.6f}" for alpha, mach in points) + "\n", encoding="utf-8")
     plot_status_map(summary_df, status_map_path)
     plot_diagnostics(summary_df, diagnostics_path)
     if not fields_df.empty:
@@ -687,6 +721,7 @@ def main() -> None:
     print(f"Wrote {summary_path}")
     print(f"Wrote {candidates_path}")
     print(f"Wrote {fields_path}")
+    print(f"Wrote {points_path}")
     print(f"Wrote {status_map_path}")
     print(f"Wrote {diagnostics_path}")
     if not fields_df.empty:
