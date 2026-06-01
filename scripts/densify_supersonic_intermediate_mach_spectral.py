@@ -74,6 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ci-weight", type=float, default=4.0)
     parser.add_argument("--cr-weight", type=float, default=0.35)
     parser.add_argument("--continuity-weight", type=float, default=1.0)
+    parser.add_argument("--acceptance-mode", choices=["modal", "spectral"], default="spectral")
     parser.add_argument("--edge-amp-threshold", type=float, default=0.05)
     parser.add_argument("--max-stage1", type=float, default=5.0e-2)
     parser.add_argument("--max-err-ci-abs", type=float, default=1.0e-2)
