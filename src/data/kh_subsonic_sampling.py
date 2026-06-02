@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
+import pandas as pd
 
 from classical_solver.subsonic.robust_subsonic_shooting import RobustSubsonicShootingSolver
 
@@ -496,3 +498,70 @@ class SubsonicReferenceCache2D:
                 ci1 = np.interp(aa[i, j], self.alpha_values, self.ci_grid[mach_idx])
                 ci_eval[i, j] = (1.0 - w) * ci0 + w * ci1
         return aa, mm, ci_eval
+
+
+@dataclass
+class DenseCIReferenceCache:
+    alpha_values: np.ndarray
+    ci_values: np.ndarray
+
+    @classmethod
+    def from_csv(
+        cls,
+        path: str | Path,
+        *,
+        alpha_column: str = "alpha",
+        ci_column: str = "ci_reference",
+    ) -> "DenseCIReferenceCache":
+        df = pd.read_csv(path)
+        if alpha_column not in df.columns:
+            raise ValueError(f"Missing alpha column {alpha_column!r} in {path}.")
+        if ci_column not in df.columns:
+            raise ValueError(f"Missing ci column {ci_column!r} in {path}.")
+        work = df[[alpha_column, ci_column]].dropna().copy()
+        work = work.sort_values(alpha_column).drop_duplicates(subset=[alpha_column], keep="last")
+        return cls(
+            alpha_values=work[alpha_column].to_numpy(dtype=float),
+            ci_values=work[ci_column].to_numpy(dtype=float),
+        )
+
+    def interpolate(self, alpha: torch.Tensor) -> torch.Tensor:
+        alpha_np = alpha.detach().cpu().numpy().reshape(-1)
+        ci_np = np.interp(alpha_np, self.alpha_values, self.ci_values)
+        return torch.tensor(ci_np, dtype=alpha.dtype, device=alpha.device).view(-1, 1)
+
+
+@dataclass
+class CIWindowCache:
+    alpha_values: np.ndarray
+    mu_values: np.ndarray
+    width_values: np.ndarray
+
+    @classmethod
+    def from_csv(
+        cls,
+        path: str | Path,
+        *,
+        alpha_column: str = "alpha",
+        mu_column: str = "guide_mu",
+        width_column: str = "guide_width",
+    ) -> "CIWindowCache":
+        df = pd.read_csv(path)
+        for column in (alpha_column, mu_column, width_column):
+            if column not in df.columns:
+                raise ValueError(f"Missing column {column!r} in {path}.")
+        work = df[[alpha_column, mu_column, width_column]].dropna().copy()
+        work = work.sort_values(alpha_column).drop_duplicates(subset=[alpha_column], keep="last")
+        return cls(
+            alpha_values=work[alpha_column].to_numpy(dtype=float),
+            mu_values=work[mu_column].to_numpy(dtype=float),
+            width_values=work[width_column].to_numpy(dtype=float),
+        )
+
+    def interpolate(self, alpha: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        alpha_np = alpha.detach().cpu().numpy().reshape(-1)
+        mu_np = np.interp(alpha_np, self.alpha_values, self.mu_values)
+        width_np = np.interp(alpha_np, self.alpha_values, self.width_values)
+        mu = torch.tensor(mu_np, dtype=alpha.dtype, device=alpha.device).view(-1, 1)
+        width = torch.tensor(width_np, dtype=alpha.dtype, device=alpha.device).view(-1, 1)
+        return mu, width

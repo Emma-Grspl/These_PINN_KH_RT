@@ -10,6 +10,8 @@ import torch.optim as optim
 
 from classical_solver.subsonic.mstab17_subsonic_solver import Mstab17SubsonicSolver
 from src.data.kh_subsonic_sampling import (
+    CIWindowCache,
+    DenseCIReferenceCache,
     SubsonicReferenceCache,
     sample_alpha_adaptive_batch,
     sample_boundary_points,
@@ -74,6 +76,8 @@ class KHSubsonicTrainingConfig:
     audit_every: int = 250
     checkpoint_every: int = 500
     enable_classic_ci_supervision: bool = True
+    external_ci_supervision_csv: str | None = None
+    ci_window_csv: str | None = None
     enable_classic_mode_audit: bool = True
     stage_split_epoch: int = 0
     stage2_freeze_ci: bool = False
@@ -118,6 +122,7 @@ class KHSubsonicTrainingConfig:
     w_first_order_amp_cap: float = 0.0
     first_order_amp_cap: float = 2.0
     w_ci_supervision: float = 5.0
+    w_ci_window: float = 0.0
     w_ci_stability_outside: float = 0.0
     w_ci_neutrality: float = 0.0
     w_ci_low_alpha_zero: float = 0.0
@@ -1192,6 +1197,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     audit_alpha_min, audit_alpha_max = audit_alpha_bounds(cfg)
 
     use_classic_ci_supervision = bool(cfg.enable_classic_ci_supervision)
+    use_external_ci_supervision = bool(cfg.external_ci_supervision_csv)
     use_classic_mode_audit = bool(cfg.enable_classic_mode_audit)
     use_classic_aux_mode_supervision = bool(
         (cfg.riccati_anchor_supervision and cfg.w_riccati_anchor > 0.0)
@@ -1222,6 +1228,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             alpha_max=audit_alpha_max,
             num_alpha=cfg.n_reference_alpha,
         )
+
+    ci_supervision_cache = None
+    if use_external_ci_supervision:
+        ci_supervision_cache = DenseCIReferenceCache.from_csv(cfg.external_ci_supervision_csv)
+    elif use_classic_ci_supervision:
+        ci_supervision_cache = reference_cache
+
+    ci_window_cache = None
+    if cfg.ci_window_csv:
+        ci_window_cache = CIWindowCache.from_csv(cfg.ci_window_csv)
 
     mode_reference_cache = None
     if use_classic_mode_audit or use_classic_aux_mode_supervision or use_classic_mode_supervision:
@@ -1449,9 +1465,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             neutral_half_width=cfg.neutral_half_width,
             device=device,
         )
-        if use_classic_ci_supervision:
-            assert reference_cache is not None
-            ci_target = reference_cache.interpolate(alpha_supervision)
+        if ci_supervision_cache is not None:
+            ci_target = ci_supervision_cache.interpolate(alpha_supervision)
             ci_pred = model.get_ci(alpha_supervision)
             loss_ci = torch.mean((ci_pred - ci_target).pow(2))
         else:
@@ -1482,9 +1497,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         loss_ci_neutrality = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_low_alpha_zero = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
         loss_ci_smoothness = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
+        loss_ci_window = torch.zeros(1, device=device, dtype=xi_interior.dtype).mean()
 
         if (
-            cfg.w_ci_stability_outside > 0.0
+            cfg.w_ci_window > 0.0
+            or ci_window_cache is not None
+            or cfg.w_ci_stability_outside > 0.0
             or cfg.w_ci_neutrality > 0.0
             or cfg.w_ci_low_alpha_zero > 0.0
             or cfg.w_ci_smoothness > 0.0
@@ -1518,14 +1536,21 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 dci_dalpha = torch.autograd.grad(ci_spectral.sum(), alpha_spectral, create_graph=True)[0]
                 loss_ci_smoothness = torch.mean(dci_dalpha.pow(2))
 
+            if cfg.w_ci_window > 0.0 and ci_window_cache is not None:
+                ci_mu, ci_width = ci_window_cache.interpolate(alpha_spectral)
+                ci_excursion = torch.relu(torch.abs(ci_spectral - ci_mu) - ci_width)
+                loss_ci_window = torch.mean(ci_excursion.pow(2))
+
         loss_ci_regularization = (
             cfg.w_ci_stability_outside * loss_ci_stability_outside
             + cfg.w_ci_neutrality * loss_ci_neutrality
             + cfg.w_ci_low_alpha_zero * loss_ci_low_alpha_zero
             + cfg.w_ci_smoothness * loss_ci_smoothness
+            + cfg.w_ci_window * loss_ci_window
         )
         has_ci_branch_objective = (
             stage_w_ci_supervision > 0.0
+            or cfg.w_ci_window > 0.0
             or cfg.w_ci_stability_outside > 0.0
             or cfg.w_ci_neutrality > 0.0
             or cfg.w_ci_low_alpha_zero > 0.0
@@ -1949,6 +1974,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_ci_neutrality": float(loss_ci_neutrality.item()),
             "loss_ci_low_alpha_zero": float(loss_ci_low_alpha_zero.item()),
             "loss_ci_smoothness": float(loss_ci_smoothness.item()),
+            "loss_ci_window": float(loss_ci_window.item()),
             "loss_ci_supervision": float(loss_ci.item()),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),
