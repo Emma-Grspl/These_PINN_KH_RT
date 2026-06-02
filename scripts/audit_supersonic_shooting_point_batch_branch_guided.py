@@ -128,6 +128,60 @@ def find_reference_row(
     return None
 
 
+def interpolate_reference_bundle_for_mach(
+    df: pd.DataFrame,
+    *,
+    mach: float,
+    alpha: float,
+    alpha_tolerance: float,
+    source_type: str,
+) -> dict[str, object] | None:
+    exact_row = find_reference_row(df, mach=float(mach), alpha=float(alpha), alpha_tolerance=float(alpha_tolerance))
+    if exact_row is not None:
+        return {
+            "Mach": float(exact_row["Mach"]),
+            "alpha": float(exact_row["alpha"]),
+            "reference_cr": float(exact_row["reference_cr"]),
+            "reference_ci": float(exact_row["reference_ci"]),
+            "source_type": str(source_type),
+            "source_label": str(exact_row.get("source_label", "")),
+        }
+
+    same_mach = df[np.isclose(df["Mach"].to_numpy(dtype=float), float(mach), atol=1.0e-10, rtol=0.0)].copy()
+    if same_mach.empty:
+        return None
+    same_mach = same_mach.sort_values(["alpha", "reference_ci", "reference_cr"]).reset_index(drop=True)
+    alpha_values = same_mach["alpha"].to_numpy(dtype=float)
+    lower_candidates = np.where(alpha_values < float(alpha) - float(alpha_tolerance))[0]
+    upper_candidates = np.where(alpha_values > float(alpha) + float(alpha_tolerance))[0]
+    if lower_candidates.size == 0 or upper_candidates.size == 0:
+        return None
+    lower_row = same_mach.iloc[int(lower_candidates[-1])]
+    upper_row = same_mach.iloc[int(upper_candidates[0])]
+    lower_alpha = float(lower_row["alpha"])
+    upper_alpha = float(upper_row["alpha"])
+    if not np.isfinite(lower_alpha) or not np.isfinite(upper_alpha) or upper_alpha <= lower_alpha:
+        return None
+
+    weight = (float(alpha) - lower_alpha) / (upper_alpha - lower_alpha)
+    weight = float(np.clip(weight, 0.0, 1.0))
+    lower_label = str(lower_row.get("source_label", ""))
+    upper_label = str(upper_row.get("source_label", ""))
+    if lower_label == upper_label:
+        source_label = lower_label
+    else:
+        source_label = f"{lower_label}|{upper_label}".strip("|")
+
+    return {
+        "Mach": float(mach),
+        "alpha": float(alpha),
+        "reference_cr": (1.0 - weight) * float(lower_row["reference_cr"]) + weight * float(upper_row["reference_cr"]),
+        "reference_ci": (1.0 - weight) * float(lower_row["reference_ci"]) + weight * float(upper_row["reference_ci"]),
+        "source_type": f"{source_type}_interp",
+        "source_label": source_label,
+    }
+
+
 def build_reference_bundle(
     *,
     spectral_df: pd.DataFrame,
@@ -136,32 +190,25 @@ def build_reference_bundle(
     alpha: float,
     alpha_tolerance: float,
 ) -> dict[str, object] | None:
-    modal_row = find_reference_row(modal_df, mach=float(mach), alpha=float(alpha), alpha_tolerance=float(alpha_tolerance))
-    if modal_row is not None:
-        return {
-            "Mach": float(modal_row["Mach"]),
-            "alpha": float(modal_row["alpha"]),
-            "reference_cr": float(modal_row["reference_cr"]),
-            "reference_ci": float(modal_row["reference_ci"]),
-            "source_type": "modal",
-            "source_label": str(modal_row.get("source_label", "")),
-        }
-    spectral_row = find_reference_row(
+    modal_bundle = interpolate_reference_bundle_for_mach(
+        modal_df,
+        mach=float(mach),
+        alpha=float(alpha),
+        alpha_tolerance=float(alpha_tolerance),
+        source_type="modal",
+    )
+    if modal_bundle is not None:
+        return modal_bundle
+    spectral_bundle = interpolate_reference_bundle_for_mach(
         spectral_df,
         mach=float(mach),
         alpha=float(alpha),
         alpha_tolerance=float(alpha_tolerance),
+        source_type="spectral",
     )
-    if spectral_row is None:
+    if spectral_bundle is None:
         return None
-    return {
-        "Mach": float(spectral_row["Mach"]),
-        "alpha": float(spectral_row["alpha"]),
-        "reference_cr": float(spectral_row["reference_cr"]),
-        "reference_ci": float(spectral_row["reference_ci"]),
-        "source_type": "spectral",
-        "source_label": str(spectral_row.get("source_label", "")),
-    }
+    return spectral_bundle
 
 
 def pick_bracketing_guides(
