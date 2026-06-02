@@ -33,6 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--warmstart-run-dir", type=Path, required=True)
     parser.add_argument("--warmstart-checkpoint", type=Path, default=None)
+    parser.add_argument("--target-mach", type=float, default=None)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--skip-training", action="store_true")
     parser.add_argument("--epochs", type=int, default=1800)
@@ -82,11 +83,18 @@ def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: P
     gamma_supervision_alphas = args.gamma_supervision_alphas
     if gamma_supervision_alphas is None:
         gamma_supervision_alphas = args.anchor_alphas
+    target_mach = float(warm_config["mach"]) if args.target_mach is None else float(args.target_mach)
+    model_alpha_min = float(warm_config["alpha_min"])
+    model_alpha_max = float(warm_config["alpha_max"])
 
     return KHSubsonicTrainingConfig(
-        mach=float(warm_config["mach"]),
-        alpha_min=float(args.alpha_min),
-        alpha_max=float(args.alpha_max),
+        mach=float(target_mach),
+        alpha_min=float(model_alpha_min),
+        alpha_max=float(model_alpha_max),
+        sampling_alpha_min=float(args.alpha_min),
+        sampling_alpha_max=float(args.alpha_max),
+        audit_alpha_min=float(args.alpha_min),
+        audit_alpha_max=float(args.alpha_max),
         epochs=int(args.epochs),
         learning_rate=float(args.learning_rate),
         hidden_dim=int(warm_config["hidden_dim"]),
@@ -221,7 +229,11 @@ def main() -> None:
 
     print("Core-only 1D subsonic Riccati protocol")
     print(f"warm start={checkpoint}")
-    print(f"alpha-range=[{cfg.alpha_min:.3f}, {cfg.alpha_max:.3f}]")
+    print(f"mach={cfg.mach:.3f}")
+    print(
+        f"alpha-range(model)=[{cfg.alpha_min:.3f}, {cfg.alpha_max:.3f}] "
+        f"active=[{args.alpha_min:.3f}, {args.alpha_max:.3f}]"
+    )
     print(f"epochs={cfg.epochs} lr={cfg.learning_rate:.2e} ci_lr={cfg.ci_branch_lr:.2e} mode_lr={cfg.mode_branch_lr:.2e}")
     print(
         f"weights: ci={cfg.w_ci_supervision:.2f} q_sup={cfg.w_q_supervision:.2f} "
@@ -262,6 +274,8 @@ def main() -> None:
         y_max=args.y_max,
         y_common=args.y_common,
         low_alpha_threshold=args.low_alpha_threshold,
+        alpha_min_override=args.alpha_min,
+        alpha_max_override=args.alpha_max,
     )
     post_summary, post_regimes_df = evaluate_candidate(
         name="posttrain",
@@ -275,6 +289,8 @@ def main() -> None:
         y_max=args.y_max,
         y_common=args.y_common,
         low_alpha_threshold=args.low_alpha_threshold,
+        alpha_min_override=args.alpha_min,
+        alpha_max_override=args.alpha_max,
     )
 
     lowalpha_summary = pd.DataFrame(
@@ -284,8 +300,11 @@ def main() -> None:
                 "warmstart_run_dir": str(args.warmstart_run_dir),
                 "warmstart_checkpoint": str(checkpoint),
                 "output_dir": str(cfg.output_dir),
-                "alpha_min": float(cfg.alpha_min),
-                "alpha_max": float(cfg.alpha_max),
+                "model_alpha_min": float(cfg.alpha_min),
+                "model_alpha_max": float(cfg.alpha_max),
+                "active_alpha_min": float(args.alpha_min),
+                "active_alpha_max": float(args.alpha_max),
+                "target_mach": float(cfg.mach),
                 "low_alpha_threshold": float(cfg.mode_low_alpha_threshold),
                 "low_alpha_weight": float(cfg.mode_low_alpha_weight),
                 "low_alpha_sample_fraction": float(cfg.low_alpha_sample_fraction),

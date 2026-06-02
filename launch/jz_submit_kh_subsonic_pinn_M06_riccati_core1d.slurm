@@ -31,10 +31,11 @@ export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 export NUMEXPR_NUM_THREADS="${SLURM_CPUS_PER_TASK}"
 
 echo "Job PINN subsonique KH M=0.6 Riccati core1d lance sur ${SLURMD_NODENAME}"
-echo "Warm start=${WARMSTART_RUN_DIR:-model_saved/kh_subsonic_fixed_mach_M06_riccati_spectral_alpha_sweep}"
+echo "Warm start=${WARMSTART_RUN_DIR:-assets/pinn_subsonic/mach_fixed/frozen_M05_riccati_reference_current}"
 if [ -n "${WARMSTART_CHECKPOINT:-}" ]; then
   echo "Warm checkpoint=${WARMSTART_CHECKPOINT}"
 fi
+echo "Target Mach=${TARGET_MACH:-0.6}"
 echo "Epochs=${EPOCHS:-1800} LR=${LEARNING_RATE:-2e-4} CI_LR=${CI_BRANCH_LR:-5e-5} MODE_LR=${MODE_BRANCH_LR:-2e-4}"
 echo "Alpha range=[${ALPHA_MIN:-0.05},${ALPHA_MAX:-0.75}] low-alpha-threshold=${LOW_ALPHA_THRESHOLD:-0.5}"
 echo "Weights: ci=${CI_SUPERVISION_WEIGHT:-5.0} q=${Q_SUPERVISION_WEIGHT:-5.0} gamma=${GAMMA_SUPERVISION_WEIGHT:-3.0} anchor=${RICCATI_ANCHOR_WEIGHT:-2.0} bc_q=${BOUNDARY_Q_WEIGHT:-10.0} shoot=${SHOOTING_MATCH_WEIGHT:-12.0}"
@@ -54,8 +55,9 @@ if [ "${SKIP_TRAINING:-0}" = "1" ]; then
 fi
 
 srun python3 scripts/run_kh_subsonic_riccati_core1d.py \
-  --warmstart-run-dir "${WARMSTART_RUN_DIR:-model_saved/kh_subsonic_fixed_mach_M06_riccati_spectral_alpha_sweep}" \
+  --warmstart-run-dir "${WARMSTART_RUN_DIR:-assets/pinn_subsonic/mach_fixed/frozen_M05_riccati_reference_current}" \
   "${EXTRA_ARGS[@]}" \
+  --target-mach "${TARGET_MACH:-0.6}" \
   --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_fixed_mach_M06_riccati_core1d}" \
   --epochs "${EPOCHS:-1800}" \
   --checkpoint-every "${CHECKPOINT_EVERY:-250}" \
