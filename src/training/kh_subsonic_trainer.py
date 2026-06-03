@@ -1193,6 +1193,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
     device = torch.device(cfg.device)
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([asdict(cfg)]).to_csv(output_dir / "config.csv", index=False)
     train_alpha_min, train_alpha_max = sampling_alpha_bounds(cfg)
     audit_alpha_min, audit_alpha_max = audit_alpha_bounds(cfg)
 
@@ -2017,7 +2018,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             record["focus_alpha_min"] = np.nan if focus_alphas is None else float(np.min(focus_alphas))
             record["focus_alpha_max"] = np.nan if focus_alphas is None else float(np.max(focus_alphas))
 
-            king.update(model, record["audit_checkpoint_metric"])
+            improved = king.update(model, record["audit_checkpoint_metric"])
             print(
                 f"Epoch {epoch:5d} | loss={record['loss']:.3e} | "
                 f"ci_mae={record['audit_ci_mae']:.3e} | "
@@ -2034,7 +2035,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             record["focus_alpha_min"] = np.nan
             record["focus_alpha_max"] = np.nan
             record["audit_checkpoint_metric"] = float(record["loss"])
-            king.update(model, record["audit_checkpoint_metric"])
+            improved = king.update(model, record["audit_checkpoint_metric"])
             if epoch == 1 or (cfg.audit_every > 0 and epoch % cfg.audit_every == 0):
                 print(
                     f"Epoch {epoch:5d} | loss={record['loss']:.3e} | "
@@ -2050,8 +2051,12 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 )
         history.append(record)
 
+        if improved:
+            safe_torch_save(king.best_state, output_dir / "model_best.pt")
+
         if epoch % cfg.checkpoint_every == 0:
             safe_torch_save(model.state_dict(), output_dir / f"checkpoint_epoch_{epoch}.pt")
+            pd.DataFrame(history).to_csv(output_dir / "history.csv", index=False)
 
     model.load_state_dict(king.best_state)
     return model, pd.DataFrame(history)
