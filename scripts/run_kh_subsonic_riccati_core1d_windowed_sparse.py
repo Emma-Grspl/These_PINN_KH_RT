@@ -27,6 +27,7 @@ from scripts.run_kh_subsonic_riccati_lowalpha_repair import (  # noqa: E402
     _maybe_int,
     evaluate_candidate,
     load_warmstart_checkpoint,
+    prepare_warmstart_eval_run_dir,
 )
 from src.training.kh_subsonic_trainer import (  # noqa: E402
     KHSubsonicTrainingConfig,
@@ -497,10 +498,16 @@ def main() -> None:
     eval_root = Path(cfg.output_dir)
     warm_eval_root = eval_root / "warmstart_eval"
     post_eval_root = eval_root / "posttrain_eval"
+    warm_eval_run_dir = prepare_warmstart_eval_run_dir(
+        base_run_dir=Path(args.warmstart_run_dir),
+        checkpoint=checkpoint if args.warmstart_checkpoint is not None else None,
+        eval_root=eval_root,
+        eval_config=cfg,
+    )
 
     warm_summary, warm_regimes_df = evaluate_candidate(
         name="warmstart",
-        run_dir=Path(args.warmstart_run_dir),
+        run_dir=warm_eval_run_dir,
         device=device,
         output_root=warm_eval_root,
         num_alpha_ci=args.num_alpha_ci,

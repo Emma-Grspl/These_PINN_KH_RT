@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict, is_dataclass
 from pathlib import Path
+import shutil
 import sys
 
 import numpy as np
@@ -94,6 +96,55 @@ def load_warmstart_checkpoint(args: argparse.Namespace) -> Path:
     if not checkpoint.exists():
         raise FileNotFoundError(f"Warm-start checkpoint not found: {checkpoint}")
     return checkpoint
+
+
+def prepare_warmstart_eval_run_dir(
+    *,
+    base_run_dir: Path,
+    checkpoint: Path | None,
+    eval_root: Path,
+    eval_config: object | None = None,
+) -> Path:
+    if checkpoint is None:
+        return base_run_dir
+
+    checkpoint = Path(checkpoint)
+    default_model_best = base_run_dir / "model_best.pt"
+    try:
+        same_as_default = default_model_best.exists() and checkpoint.resolve() == default_model_best.resolve()
+    except FileNotFoundError:
+        same_as_default = False
+    if same_as_default:
+        return base_run_dir
+
+    candidate_dir = Path(eval_root) / "_warmstart_checkpoint_candidate"
+    candidate_dir.mkdir(parents=True, exist_ok=True)
+
+    if eval_config is None:
+        config_path = base_run_dir / "config.csv"
+        if not config_path.exists():
+            raise FileNotFoundError(f"Warm-start config not found for evaluation: {config_path}")
+        config_df = pd.read_csv(config_path).iloc[[0]].copy()
+    elif isinstance(eval_config, pd.Series):
+        config_df = pd.DataFrame([eval_config.to_dict()])
+    elif isinstance(eval_config, dict):
+        config_df = pd.DataFrame([dict(eval_config)])
+    elif is_dataclass(eval_config):
+        config_df = pd.DataFrame([asdict(eval_config)])
+    else:
+        raise TypeError(f"Unsupported eval_config type: {type(eval_config)!r}")
+
+    config_df.to_csv(candidate_dir / "config.csv", index=False)
+    shutil.copy2(checkpoint, candidate_dir / "model_best.pt")
+    pd.DataFrame(
+        [
+            {
+                "base_run_dir": str(base_run_dir),
+                "checkpoint": str(checkpoint),
+            }
+        ]
+    ).to_csv(candidate_dir / "warmstart_source.csv", index=False)
+    return candidate_dir
 
 
 def build_config(args: argparse.Namespace, warm_config: pd.Series, checkpoint: Path) -> KHSubsonicTrainingConfig:
@@ -340,10 +391,17 @@ def main() -> None:
         f"weight={cfg.mode_low_alpha_weight:.2f}"
     )
 
-    warm_eval_dir = Path(args.output_dir) / "warmstart_eval"
+    eval_root = Path(args.output_dir)
+    warm_eval_dir = eval_root / "warmstart_eval"
+    warm_eval_run_dir = prepare_warmstart_eval_run_dir(
+        base_run_dir=Path(args.warmstart_run_dir),
+        checkpoint=checkpoint if args.warmstart_checkpoint is not None else None,
+        eval_root=eval_root,
+        eval_config=cfg,
+    )
     warm_summary, warm_regimes = evaluate_candidate(
         name="riccati_multibranch_warmstart",
-        run_dir=Path(args.warmstart_run_dir),
+        run_dir=warm_eval_run_dir,
         device=device,
         output_root=warm_eval_dir,
         num_alpha_ci=int(args.num_alpha_ci),
