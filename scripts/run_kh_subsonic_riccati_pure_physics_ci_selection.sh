@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${ROOT_DIR}"
+
+python3 scripts/train_kh_subsonic_pinn.py \
+  --mach "${MACH_VALUE:-0.5}" \
+  --alpha-min "${ALPHA_MIN:-0.05}" \
+  --alpha-max "${ALPHA_MAX:-0.85}" \
+  --epochs "${EPOCHS:-5000}" \
+  --learning-rate "${LEARNING_RATE:-1e-3}" \
+  --hidden-dim "${HIDDEN_DIM:-160}" \
+  --mode-depth "${MODE_DEPTH:-4}" \
+  --ci-depth "${CI_DEPTH:-2}" \
+  --activation tanh \
+  --mapping-scale "${MAPPING_SCALE:-3.0}" \
+  --n-interior "${N_INTERIOR:-512}" \
+  --n-boundary "${N_BOUNDARY:-64}" \
+  --n-alpha-supervision "${N_ALPHA_SUPERVISION:-128}" \
+  --n-anchor-alpha "${N_ANCHOR_ALPHA:-16}" \
+  --n-norm-interior "${N_NORM_INTERIOR:-256}" \
+  --n-reference-alpha "${N_REFERENCE_ALPHA:-81}" \
+  --n-audit-alpha "${N_AUDIT_ALPHA:-21}" \
+  --n-mode-audit-alpha "${N_MODE_AUDIT_ALPHA:-9}" \
+  --n-mode-audit-y "${N_MODE_AUDIT_Y:-801}" \
+  --audit-every "${AUDIT_EVERY:-100}" \
+  --checkpoint-every "${CHECKPOINT_EVERY:-500}" \
+  --focus-fraction "${FOCUS_FRACTION:-0.0}" \
+  --focus-half-width "${FOCUS_HALF_WIDTH:-0.03}" \
+  --neutral-fraction "${NEUTRAL_FRACTION:-0.0}" \
+  --neutral-half-width "${NEUTRAL_HALF_WIDTH:-0.04}" \
+  --error-threshold "${ERROR_THRESHOLD:-0.01}" \
+  --mode-error-threshold "${MODE_ERROR_THRESHOLD:-0.12}" \
+  --max-focus-points "${MAX_FOCUS_POINTS:-8}" \
+  --anchor-strategy point \
+  --w-pde "${W_PDE:-1.0}" \
+  --w-bc-kappa "${W_BC_KAPPA:-10.0}" \
+  --w-bc-q "${W_BC_Q:-20.0}" \
+  --w-ci-supervision 0.0 \
+  --w-riccati-anchor 0.0 \
+  --w-q-supervision 0.0 \
+  --w-riccati-center-kappa "${W_RICCATI_CENTER_KAPPA:-5.0}" \
+  --w-riccati-center-peak "${W_RICCATI_CENTER_PEAK:-2.0}" \
+  --w-riccati-boundary-band-kappa "${W_RICCATI_BOUNDARY_BAND_KAPPA:-2.0}" \
+  --w-riccati-boundary-band-q "${W_RICCATI_BOUNDARY_BAND_Q:-8.0}" \
+  --w-riccati-shooting-match "${W_RICCATI_SHOOTING_MATCH:-20.0}" \
+  --w-riccati-ci-local-min "${W_RICCATI_CI_LOCAL_MIN:-10.0}" \
+  --riccati-center-xi "${RICCATI_CENTER_XI:-0.0}" \
+  --riccati-boundary-band-points "${RICCATI_BOUNDARY_BAND_POINTS:-32}" \
+  --riccati-boundary-band-start "${RICCATI_BOUNDARY_BAND_START:-0.94}" \
+  --riccati-boundary-band-end "${RICCATI_BOUNDARY_BAND_END:-0.995}" \
+  --riccati-shooting-steps "${RICCATI_SHOOTING_STEPS:-512}" \
+  --riccati-shooting-xi-boundary "${RICCATI_SHOOTING_XI_BOUNDARY:-0.995}" \
+  --riccati-ci-local-min-delta-abs "${RICCATI_CI_LOCAL_MIN_DELTA_ABS:-0.005}" \
+  --riccati-ci-local-min-delta-rel "${RICCATI_CI_LOCAL_MIN_DELTA_REL:-0.05}" \
+  --riccati-ci-local-min-margin "${RICCATI_CI_LOCAL_MIN_MARGIN:-0.0}" \
+  --disable-classic-ci-supervision \
+  --audit-ci-weight "${AUDIT_CI_WEIGHT:-10.0}" \
+  --audit-env-weight "${AUDIT_ENV_WEIGHT:-1.0}" \
+  --audit-phase-weight "${AUDIT_PHASE_WEIGHT:-0.5}" \
+  --audit-peak-weight "${AUDIT_PEAK_WEIGHT:-0.25}" \
+  --phase-mask-fraction "${PHASE_MASK_FRACTION:-0.15}" \
+  --classic-n-points "${CLASSIC_N_POINTS:-561}" \
+  --classic-mapping-scale "${CLASSIC_MAPPING_SCALE:-3.0}" \
+  --classic-xi-max "${CLASSIC_XI_MAX:-0.99}" \
+  --mode-representation riccati \
+  --mode-experts "${MODE_EXPERTS:-2}" \
+  --alpha-split-threshold "${ALPHA_SPLIT_THRESHOLD:-0.40}" \
+  --device "${DEVICE:-cpu}" \
+  --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_fixed_mach_M05_riccati_pure_physics_ci_selection}"

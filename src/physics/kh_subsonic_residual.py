@@ -438,9 +438,35 @@ def riccati_shooting_match_loss(
     if not torch.isfinite(y_max) or float(torch.abs(y_max).detach().cpu()) <= 0.0:
         return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
 
-    losses: list[torch.Tensor] = []
     alpha_samples = alpha[:, 0]
     ci_samples = model.get_ci(alpha)[:, 0]
+
+    return _riccati_shooting_match_loss_from_samples(
+        mapping_scale,
+        alpha_samples,
+        ci_samples,
+        mach,
+        n_steps=n_steps,
+        xi_boundary=xi_boundary,
+    ).mean()
+
+
+def _riccati_shooting_match_loss_from_samples(
+    mapping_scale: torch.Tensor,
+    alpha_samples: torch.Tensor,
+    ci_samples: torch.Tensor,
+    mach: float,
+    *,
+    n_steps: int,
+    xi_boundary: float,
+) -> torch.Tensor:
+    if n_steps <= 0:
+        return torch.zeros(alpha_samples.shape[0], device=alpha_samples.device, dtype=alpha_samples.dtype)
+
+    xi_edge = torch.tensor([[float(xi_boundary)]], dtype=alpha_samples.dtype, device=alpha_samples.device)
+    y_max = torch.abs(xi_to_y(xi_edge, mapping_scale))[0, 0]
+    if not torch.isfinite(y_max) or float(torch.abs(y_max).detach().cpu()) <= 0.0:
+        return torch.zeros(alpha_samples.shape[0], device=alpha_samples.device, dtype=alpha_samples.dtype)
 
     def rk4_step(y_val: torch.Tensor, gamma_val: torch.Tensor, h: torch.Tensor, alpha_val: torch.Tensor, ci_val: torch.Tensor) -> torch.Tensor:
         k1 = riccati_gamma_rhs(y_val, gamma_val, alpha_val, mach, ci_val)
@@ -449,6 +475,7 @@ def riccati_shooting_match_loss(
         k4 = riccati_gamma_rhs(y_val + h, gamma_val + h * k3, alpha_val, mach, ci_val)
         return gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
 
+    losses: list[torch.Tensor] = []
     for alpha_val, ci_val in zip(alpha_samples, ci_samples):
         alpha_scalar = alpha_val.view(1)
         ci_scalar = ci_val.view(1)
@@ -475,8 +502,63 @@ def riccati_shooting_match_loss(
         losses.append(mismatch.real)
 
     if not losses:
+        return torch.zeros(alpha_samples.shape[0], device=alpha_samples.device, dtype=alpha_samples.dtype)
+    return torch.stack(losses)
+
+
+def riccati_ci_local_min_loss(
+    model,
+    alpha: torch.Tensor,
+    mach: float,
+    *,
+    n_steps: int,
+    xi_boundary: float,
+    delta_abs: float,
+    delta_rel: float,
+    margin: float = 0.0,
+) -> torch.Tensor:
+    if n_steps <= 0:
         return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
-    return torch.stack(losses).mean()
+
+    ci_center = model.get_ci(alpha)[:, 0]
+    delta = torch.clamp(
+        float(delta_abs) + float(delta_rel) * torch.abs(ci_center),
+        min=max(float(delta_abs), 1e-6),
+    )
+    ci_minus = torch.clamp(ci_center - delta, min=1e-6)
+    ci_plus = ci_center + delta
+
+    mapping_scale = model.get_mapping_scale()
+    alpha_samples = alpha[:, 0]
+    mismatch_center = _riccati_shooting_match_loss_from_samples(
+        mapping_scale,
+        alpha_samples,
+        ci_center,
+        mach,
+        n_steps=n_steps,
+        xi_boundary=xi_boundary,
+    )
+    mismatch_minus = _riccati_shooting_match_loss_from_samples(
+        mapping_scale,
+        alpha_samples,
+        ci_minus,
+        mach,
+        n_steps=n_steps,
+        xi_boundary=xi_boundary,
+    )
+    mismatch_plus = _riccati_shooting_match_loss_from_samples(
+        mapping_scale,
+        alpha_samples,
+        ci_plus,
+        mach,
+        n_steps=n_steps,
+        xi_boundary=xi_boundary,
+    )
+
+    margin_t = torch.as_tensor(float(margin), dtype=alpha.dtype, device=alpha.device)
+    penalty_minus = torch.relu(mismatch_center - mismatch_minus + margin_t).pow(2)
+    penalty_plus = torch.relu(mismatch_center - mismatch_plus + margin_t).pow(2)
+    return 0.5 * (penalty_minus.mean() + penalty_plus.mean())
 
 
 def normalization_loss(
