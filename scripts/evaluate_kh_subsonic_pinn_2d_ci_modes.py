@@ -24,7 +24,7 @@ from src.physics.kh_subsonic_residual import (
     base_velocity,
     base_velocity_derivative,
     dy_dxi,
-    reconstruct_pressure_from_riccati_2d,
+    reconstruct_pressure_p_y_from_riccati_2d,
     xi_to_y,
 )
 
@@ -354,21 +354,27 @@ def load_pinn_full_mode(
     xi.requires_grad_(True)
 
     if model.mode_representation == "riccati":
-        pr, pi, y_t = reconstruct_pressure_from_riccati_2d(model, xi, alpha_tensor, mach_tensor, anchor_xi=0.0)
+        pr, pi, p_y, _, y_t = reconstruct_pressure_p_y_from_riccati_2d(
+            model,
+            xi,
+            alpha_tensor,
+            mach_tensor,
+            anchor_xi=0.0,
+        )
     else:
         pred = model(xi, alpha_tensor, mach_tensor)
         pr = pred[:, 0:1]
         pi = pred[:, 1:2]
         y_t = xi_to_y(xi, model.get_mapping_scale().detach())
+        p_r_xi = torch.autograd.grad(pr, xi, grad_outputs=torch.ones_like(pr), create_graph=False, retain_graph=True)[0]
+        p_i_xi = torch.autograd.grad(pi, xi, grad_outputs=torch.ones_like(pi), create_graph=False, retain_graph=True)[0]
+        p_xi = torch.complex(p_r_xi, p_i_xi)
+
+        mapping_scale = model.get_mapping_scale().detach()
+        y_xi = dy_dxi(xi, mapping_scale)
+        p_y = p_xi / y_xi
 
     p = torch.complex(pr, pi)
-    p_r_xi = torch.autograd.grad(pr, xi, grad_outputs=torch.ones_like(pr), create_graph=False, retain_graph=True)[0]
-    p_i_xi = torch.autograd.grad(pi, xi, grad_outputs=torch.ones_like(pi), create_graph=False, retain_graph=True)[0]
-    p_xi = torch.complex(p_r_xi, p_i_xi)
-
-    mapping_scale = model.get_mapping_scale().detach()
-    y_xi = dy_dxi(xi, mapping_scale)
-    p_y = p_xi / y_xi
 
     ci = float(model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device), torch.tensor([[mach]], dtype=torch.float32, device=device)).item())
     c = -1j * ci
