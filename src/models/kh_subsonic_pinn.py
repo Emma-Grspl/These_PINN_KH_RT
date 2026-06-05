@@ -284,6 +284,55 @@ def load_fixed_mach_state_dict_compat(
         )
 
 
+def _linear_layers_from_sequential(net: nn.Sequential) -> list[nn.Linear]:
+    layers: list[nn.Linear] = []
+    for module in net:
+        if isinstance(module, nn.Linear):
+            layers.append(module)
+    return layers
+
+
+def _copy_linear_stack_with_padded_first_layer(
+    src_net: nn.Sequential,
+    dst_net: nn.Sequential,
+    *,
+    extra_inputs: int,
+) -> None:
+    src_layers = _linear_layers_from_sequential(src_net)
+    dst_layers = _linear_layers_from_sequential(dst_net)
+    if len(src_layers) != len(dst_layers):
+        raise RuntimeError(
+            "Incompatible MLP depths for fixed-mach -> multi-mach transfer: "
+            f"src_layers={len(src_layers)}, dst_layers={len(dst_layers)}"
+        )
+
+    with torch.no_grad():
+        for idx, (src_layer, dst_layer) in enumerate(zip(src_layers, dst_layers, strict=True)):
+            if src_layer.out_features != dst_layer.out_features:
+                raise RuntimeError(
+                    "Incompatible MLP widths for fixed-mach -> multi-mach transfer: "
+                    f"layer={idx}, src_out={src_layer.out_features}, dst_out={dst_layer.out_features}"
+                )
+            if idx == 0:
+                if dst_layer.in_features != src_layer.in_features + int(extra_inputs):
+                    raise RuntimeError(
+                        "Unexpected first-layer input sizes for fixed-mach -> multi-mach transfer: "
+                        f"src_in={src_layer.in_features}, dst_in={dst_layer.in_features}, extra_inputs={extra_inputs}"
+                    )
+                dst_layer.weight.zero_()
+                dst_layer.weight[:, : src_layer.in_features].copy_(src_layer.weight)
+                dst_layer.bias.copy_(src_layer.bias)
+                continue
+
+            if src_layer.in_features != dst_layer.in_features:
+                raise RuntimeError(
+                    "Incompatible hidden-layer input sizes for fixed-mach -> multi-mach transfer: "
+                    f"layer={idx}, src_in={src_layer.in_features}, dst_in={dst_layer.in_features}"
+                )
+            dst_layer.weight.copy_(src_layer.weight)
+            dst_layer.bias.copy_(src_layer.bias)
+
+
 class KHSubsonicMultiMachPINN(nn.Module):
     """
     Prototype PINN subsonique 2D sur (alpha, Mach).
@@ -385,3 +434,39 @@ class KHSubsonicMultiMachPINN(nn.Module):
 
     def get_mapping_scale(self) -> torch.Tensor:
         return F.softplus(self.raw_L) + 1e-6
+
+
+def initialize_multimach_from_fixed_mach(
+    multimach_model: KHSubsonicMultiMachPINN,
+    fixed_model: KHSubsonicFixedMachPINN,
+) -> None:
+    if fixed_model.mode_representation != multimach_model.mode_representation:
+        raise RuntimeError(
+            "Mode representation mismatch for fixed-mach -> multi-mach transfer: "
+            f"{fixed_model.mode_representation!r} vs {multimach_model.mode_representation!r}"
+        )
+    if fixed_model.mode_fourier is not None or multimach_model.mode_fourier is not None:
+        raise RuntimeError(
+            "Fixed-mach -> multi-mach transfer only supports models without Fourier features."
+        )
+    if fixed_model.fixed_scalar_ci:
+        raise RuntimeError(
+            "Fixed-mach -> multi-mach transfer requires a trainable ci branch, not fixed_scalar_ci."
+        )
+    if fixed_model.ci_net is None:
+        raise RuntimeError("Fixed-mach ci_net is missing.")
+
+    _copy_linear_stack_with_padded_first_layer(
+        fixed_model.mode_net,
+        multimach_model.mode_net,
+        extra_inputs=1,
+    )
+    _copy_linear_stack_with_padded_first_layer(
+        fixed_model.ci_net,
+        multimach_model.ci_net,
+        extra_inputs=1,
+    )
+
+    with torch.no_grad():
+        multimach_model.raw_ci_bias.copy_(fixed_model.raw_ci_bias)
+        multimach_model.raw_L.copy_(fixed_model.raw_L)

@@ -15,7 +15,12 @@ from src.data.kh_subsonic_sampling import (
     sample_boundary_points,
     sample_interior_points,
 )
-from src.models.kh_subsonic_pinn import KHSubsonicMultiMachPINN
+from src.models.kh_subsonic_pinn import (
+    KHSubsonicMultiMachPINN,
+    build_fixed_mach_model_from_config,
+    initialize_multimach_from_fixed_mach,
+    load_fixed_mach_state_dict_compat,
+)
 from src.physics.kh_subsonic_residual import (
     boundary_decay_loss_2d,
     normalization_loss_2d,
@@ -80,6 +85,10 @@ class KHSubsonic2DTrainingConfig:
     w_phase: float = 1.0
     w_ci_supervision: float = 5.0
     mode_representation: str = "cartesian"
+    initial_model_path: str | None = None
+    initial_model_kind: str | None = None
+    initial_model_config_path: str | None = None
+    initial_model_strict: bool = True
     output_dir: str = "model_saved/kh_subsonic_2d_local"
     device: str = "cpu"
 
@@ -126,6 +135,7 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
     device = torch.device(cfg.device)
     output_dir = Path(cfg.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame([asdict(cfg)]).to_csv(output_dir / "config.csv", index=False)
 
     reference_cache = SubsonicReferenceCache2D.build(
         alpha_min=cfg.alpha_min,
@@ -154,6 +164,37 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
         trainable_mapping_scale=cfg.trainable_mapping_scale,
         mode_representation=cfg.mode_representation,
     ).to(device)
+    if cfg.initial_model_path:
+        initial_path = Path(cfg.initial_model_path)
+        state_dict = torch.load(initial_path, map_location=device)
+        initial_kind = str(cfg.initial_model_kind or "multimach")
+        if initial_kind == "fixed_mach":
+            if not cfg.initial_model_config_path:
+                raise RuntimeError(
+                    "initial_model_config_path is required when initial_model_kind='fixed_mach'."
+                )
+            fixed_config_df = pd.read_csv(cfg.initial_model_config_path)
+            if fixed_config_df.empty:
+                raise RuntimeError(
+                    f"Fixed-mach warmstart config is empty: {cfg.initial_model_config_path}"
+                )
+            fixed_model = build_fixed_mach_model_from_config(fixed_config_df.iloc[0])
+            load_fixed_mach_state_dict_compat(fixed_model, state_dict)
+            initialize_multimach_from_fixed_mach(model, fixed_model)
+        elif initial_kind == "multimach":
+            model.load_state_dict(state_dict, strict=bool(cfg.initial_model_strict))
+        else:
+            raise RuntimeError(f"Unsupported initial_model_kind={initial_kind!r}.")
+
+        pd.DataFrame(
+            [
+                {
+                    "initial_model_path": str(initial_path),
+                    "initial_model_kind": initial_kind,
+                    "initial_model_config_path": cfg.initial_model_config_path or "",
+                }
+            ]
+        ).to_csv(output_dir / "warmstart_source.csv", index=False)
     optimizer = optim.Adam(model.parameters(), lr=cfg.learning_rate)
     ci_optimizer = None
     mode_optimizer = None
@@ -365,7 +406,9 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
             focus_points = np.asarray(failing_points, dtype=float) if len(failing_points) else None
             record["n_focus_points"] = 0 if focus_points is None else int(len(focus_points))
 
-            king.update(model, record["audit_ci_mae"])
+            improved = king.update(model, record["audit_ci_mae"])
+            if improved:
+                torch.save(king.best_state, output_dir / "model_best.pt")
             print(
                 f"Epoch {epoch:5d} | loss={record['loss']:.3e} | "
                 f"ci_mae={record['audit_ci_mae']:.3e} | "
@@ -376,6 +419,7 @@ def train_subsonic_2d_pinn(cfg: KHSubsonic2DTrainingConfig) -> tuple[KHSubsonicM
 
         if epoch % cfg.checkpoint_every == 0:
             torch.save(model.state_dict(), output_dir / f"checkpoint_epoch_{epoch}.pt")
+            pd.DataFrame(history).to_csv(output_dir / "history.csv", index=False)
 
     model.load_state_dict(king.best_state)
     return model, pd.DataFrame(history)
