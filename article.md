@@ -1,513 +1,582 @@
-# Plan d'article
+# Working Draft
 
-Ce document sert de squelette pour un futur article. Il ne fige pas encore les resultats finaux. L'objectif est de cadrer :
+Tentative title:
 
-- la question scientifique ;
-- l'angle "physique numerique" ;
-- le fil narratif entre solveurs classiques et PINNs ;
-- la structure des sections, figures et messages principaux.
+`Learning compressible Kelvin-Helmholtz eigenvalues and eigenmodes with physics-informed neural networks: a benchmark against shooting solvers`
 
-## 1. Positionnement general
+This file is no longer only a plan. It now contains a first draft of the opening sections of the paper:
 
-### 1.1. Idee centrale
+- Introduction
+- Physical and spectral problem
+- Classical reference solver
+- Beginning of the PINN section
 
-L'article doit montrer qu'un probleme spectral d'instabilite hydrodynamique compressible, pertinent pour la modelisation reduite des plasmas de fusion, peut etre traite par PINN a condition de :
+The remaining sections are still outlined at the end.
 
-- verrouiller une reference classique fiable ;
-- distinguer clairement les regimes faciles et difficiles ;
-- assumer que la physique seule ne selectionne pas toujours correctement la bonne branche modale ;
-- introduire, quand c'est necessaire, un guidage classique leger ou fort.
+## 1. Introduction
 
-### 1.2. Angle de publication
+Hydrodynamic and magnetohydrodynamic instabilities remain a central topic in fusion plasma physics because they organize mixing, momentum redistribution, and the transfer of fluctuation energy across scales. Even when the final target is a nonlinear or multi-physics regime, linear stability analysis still provides the first spectral objects from which reduced models, local diagnostics, and surrogate strategies can be built. In that sense, reliable eigenvalue solvers are not only diagnostic tools: they are also reusable numerical components for larger modelling pipelines.
 
-L'angle n'est pas :
+The present work focuses on a compressible Kelvin-Helmholtz shear layer with a smooth base profile. This configuration is compact enough to stay interpretable and at the same time rich enough to benchmark a spectral learning workflow: the eigenvalue is complex, the modal structure depends on asymptotic branch selection, and nearby modal families can coexist over part of parameter space. These features make the problem well suited to assessing whether a physics-informed neural network can learn a full spectral object rather than only a single scalar observable.
 
-- "les PINNs marchent partout" ;
-- ni "on remplace les solveurs classiques".
+Physics-informed neural networks, or PINNs, are attractive in that setting because they approximate parameter-dependent solutions while enforcing the governing equations directly inside the loss function. This opens the possibility of learning a map from control parameters to eigenvalues and eigenmodes without assembling a dense classical database over the whole domain. For spectral problems, however, the target of the learning task is composite: one must recover both the admissible eigenvalue and the associated eigenfunction, together with a consistent branch identity across parameter space. The present paper therefore treats the PINN and the classical solver as complementary ingredients of the same benchmark.
 
-L'angle plus solide est :
+Our methodology starts from local shooting solvers in subsonic and supersonic regimes. These solvers are used to identify which points are spectrally and modally validated, which continuations remain branch-consistent, and which regions currently support only spectral validation. Once this local reference is organized, we use it to benchmark PINNs with metrics that distinguish scalar spectral accuracy from modal reconstruction quality. This separation is central to the paper: learning a growth rate such as \(c_i\) is one task, whereas learning a branch-consistent eigenmode is another.
 
-- un probleme spectral non trivial de physique des fluides compressibles ;
-- une analyse methodique des limites des solveurs classiques et des PINNs ;
-- un protocole hybride qui clarifie quand la physique seule suffit et quand elle ne suffit plus.
+The paper is organized as follows. Section 2 introduces the compressible shear layer and the associated pressure eigenvalue problem. Section 3 presents the classical shooting framework used as local reference in both subsonic and supersonic regimes, including the boundary conditions and coordinate mappings used in practice. Section 4 introduces the PINN formulation adopted in this work, summarizes the benchmark configurations that were tested, and defines the role of sparse classical guidance. The remaining sections will then report the subsonic and supersonic benchmarks and discuss what the present workflow already validates for spectral PINNs.
 
-### 1.3. Public vise
+## 2. Physical and Spectral Problem
 
-- communaute "computational / numerical physics" ;
-- lecteurs interesses par :
-  - eigenvalue problems in hydrodynamic stability,
-  - physics-informed learning,
-  - hybrid numerical / ML workflows,
-  - reduced modeling for fusion-relevant flows.
+### 2.1. Compressible shear layer
 
-## 2. Titres de travail possibles
+We consider a two-dimensional inviscid compressible shear layer with base velocity
 
-### Option A
+\[
+U(y) = \tanh(y). \tag{1}
+\]
 
-`Physics-informed neural networks for compressible Kelvin-Helmholtz eigenmodes: limits of pure-physics training and hybrid guidance strategies`
+Equation (1) is the smooth mixing-layer profile used in the classical compressible Kelvin-Helmholtz literature. The streamwise direction is denoted by \(x\), the transverse direction by \(y\), and the perturbations are parameterized by a real streamwise wavenumber \(\alpha\) and a Mach number \(M\), where \(M\) denotes the ratio between the characteristic flow velocity and the sound speed of the reference state.
 
-### Option B
+In the nondimensional formulation used here, the base flow is parallel and reads
 
-`Learning unstable modes of compressible shear layers with PINNs: a benchmark against classical shooting and generalized eigenvalue solvers`
+\[
+\bigl(\bar u,\bar v,\bar p,\bar \rho\bigr)(y) = \bigl(U(y),0,\bar p_0,\bar \rho_0\bigr), \tag{2}
+\]
 
-### Option C
+where \(\bar p_0\) and \(\bar \rho_0\) are uniform reference thermodynamic states and only the streamwise velocity varies across the shear layer through Eq. (1). The unknowns of the spectral problem are therefore perturbations around the base state in Eq. (2).
 
-`From classical spectral solvers to PINNs for compressible Kelvin-Helmholtz instability: branch selection, modal reconstruction, and hybrid supervision`
+The same spectral equation is used throughout the paper for all values of \(M\). In that sense, there is no mathematical separation between the subsonic and supersonic cases. The distinction introduced below is physical and numerical: the asymptotic modal structure induced by the same equation changes with \(M\), and the reference workflow is organized accordingly.
 
-## 3. Resume scientifique en 5 lignes
+### 2.2. Normal-mode formulation
 
-Une version courte du message de l'article pourrait etre :
+The total state is decomposed as base flow plus perturbation,
 
-1. On etudie un probleme spectral de type Kelvin-Helmholtz compressible dans une couche de cisaillement.
-2. On construit d'abord une reference classique, en distinguant soigneusement solveur de tir et solveur GEP.
-3. On montre que le PINN reproduit bien le coeur du spectre dans certains regimes, mais que les extremites en parametre posent un probleme de selection modale.
-4. On montre ensuite qu'un guidage classique cible permet de reparer ces regimes difficiles.
-5. L'apport principal n'est pas seulement un resultat de performance, mais une cartographie claire des regimes ou la physique informee seule est suffisante ou insuffisante.
+\[
+\bigl(u,v,p,\rho\bigr)(x,y,t)
+=
+\bigl(\bar u,\bar v,\bar p,\bar \rho\bigr)(y)
++
+\bigl(u',v',p',\rho'\bigr)(x,y,t), \tag{3}
+\]
 
-## 4. Questions scientifiques a poser explicitement
+and the perturbation fields are sought under the standard normal-mode ansatz
 
-L'article doit etre structure autour de questions nettes.
+\[
+q'(x,y,t) = \hat q(y)\,\exp\!\bigl(i\alpha(x-ct)\bigr), \qquad c = c_r + i c_i. \tag{4}
+\]
 
-### Q1. Probleme physique
+The temporal growth rate is therefore
 
-Peut-on reconstruire de maniere fiable les valeurs propres complexes et les modes propres d'une instabilite de cisaillement compressible sur une bande de parametres `(alpha, Mach)` ?
+\[
+\omega_i = \alpha c_i. \tag{5}
+\]
 
-### Q2. Probleme numerique
+Equation (4) shows that the unknown is a spectral pair composed of the complex phase velocity \(c\) and the transverse eigenfunction \(\hat q(y)\). Equation (5) identifies \(c_i\) as the quantity that controls temporal amplification, while \(c_r\) sets the phase velocity.
 
-Quels solveurs classiques fournissent une reference robuste pour ce probleme, et sur quelles quantites ?
+After elimination of the other perturbation variables, the problem can be written in terms of a pressure-like scalar amplitude \(\hat p(y)\) satisfying
 
-### Q3. Probleme PINN
+\[
+\hat p'' - \frac{2U'}{U-c}\hat p' - \alpha^2 \Bigl[1 - M^2(U-c)^2\Bigr]\hat p = 0. \tag{6}
+\]
 
-Un PINN contraint par la physique peut-il apprendre simultanement :
+Equation (6) is the pressure form used throughout the paper. It concentrates the spectral problem into a single transverse unknown and provides direct access to the far-field structure through the coefficients of the ODE.
 
-- la croissance `c_i`,
-- la vitesse de phase `c_r`,
-- et la structure modale ?
+### 2.3. Spectral interpretation
 
-### Q4. Probleme methodologique
+The rest of the paper uses Eq. (6) in two complementary ways. First, it provides a pointwise spectral equation for the classical shooting solvers. Second, it serves as the residual backbone of the PINN formulations. The benchmark therefore keeps the same mathematical object on both sides and changes only the numerical representation: direct shooting in the classical reference, neural approximation in the PINN.
 
-Quand la physique seule ne suffit pas, quelle forme minimale de supervision classique faut-il ajouter ?
+For the present benchmark, the key quantity is not only the scalar growth rate from Eq. (5), but the full pair \((c,\hat p)\). The validation protocol is organized around that observation: a point may be spectrally acceptable in terms of \(c\) and still require a separate modal check on \(\hat p\) and on the other reconstructed fields \((\hat \rho,\hat u,\hat v)\).
 
-## 5. Structure proposee de l'article
+## 3. Classical Reference Solver
 
-## 5.1. Introduction
+### 3.1. Reference strategy
 
-### Role de cette section
+Before training a PINN, we first construct a local classical reference. This step is methodological rather than cosmetic. Since the same pressure equation supports several nearby modal families over part of the \((\alpha,M)\) plane, the benchmark requires a solver that treats a single parameter pair at a time, imposes the admissible far-field behavior, and exposes diagnostics on both the eigenvalue and the mode.
 
-Installer le contexte physique et numerique, puis poser la contribution.
+The reference used in this work is based on shooting methods. The common idea is the following: propagate admissible far-field branches toward a matching point, then adjust the eigenvalue until the left and right solutions become compatible. In practice, the production workflow combines:
 
-### Points a couvrir
+- a fast subsonic Riccati shooting solver for dense local sweeps;
+- a more complete subsonic `mstab17`-style cross-check near neutrality and for modal reconstruction;
+- a two-stage supersonic Riccati shooting solver for pointwise and short-line validation.
 
-- Contexte large : instabilites hydrodynamiques et magnetohydrodynamiques dans les plasmas de fusion.
-- Motivation "reduced models" :
-  - comprendre les mecanismes de croissance lineaire ;
-  - disposer de solveurs rapides pour scans parametriques ;
-  - preparer des modeles data-driven / physics-informed.
-- Interet des PINNs :
-  - apprentissage avec contraintes physiques ;
-  - potentiel pour les problemes spectraux parametres ;
-  - mais difficulte de selection de branche et de reconstruction de modes.
-- Limite de la litterature :
-  - beaucoup de demonstrations PINN portent sur des PDE d'evolution ou des ODE simples ;
-  - moins de travaux abordent des problemes spectraux complexes avec multi-branches et conditions asymptotiques.
-- Message de l'article :
-  - sur ce probleme, la difficulte centrale n'est pas seulement de predire un scalaire, mais de suivre la bonne famille modale.
+This organization reflects what was actually tested in the repository. The classical benchmark is first established pointwise, then extended through validated local continuations. Global reconstructions are built only from points that already satisfy local spectral and modal checks.
 
-### Dernier paragraphe de l'introduction
+### 3.2. Riccati reformulation
 
-Il doit annoncer explicitement :
+The pressure equation in Eq. (6) is rewritten through the Riccati variable
 
-- le probleme etudie ;
-- les solveurs classiques compares ;
-- le PINN propose ;
-- et la these principale :
-  - la physique seule suffit dans certains regimes ;
-  - un guidage classique devient necessaire dans les regimes difficiles.
+\[
+\gamma(y) = \frac{\hat p'(y)}{\hat p(y)}. \tag{7}
+\]
 
-## 5.2. Probleme physique
+Substituting Eq. (7) into Eq. (6) gives the first-order nonlinear equation
 
-### Objectif
+\[
+\gamma' = -\gamma^2 - P(y)\gamma + \alpha^2 R(y), \qquad
+P(y) = -\frac{2U'(y)}{U(y)-c}, \qquad
+R(y) = 1 - M^2\bigl(U(y)-c\bigr)^2. \tag{8}
+\]
 
-Expliquer la physique assez clairement pour un journal de physique numerique, sans noyer le lecteur.
+Equation (8) is the working form of all the shooting solvers used in the present paper. It turns the far-field selection into a condition on asymptotic values of \(\gamma\), and it replaces raw pressure matching by a local matching condition at a prescribed transverse location.
 
-### Sous-sections conseillees
+### 3.3. Boundary conditions and coordinate mappings
 
-#### 5.2.1. Couche de cisaillement compressible et instabilite KH
+The physical boundary condition is posed on the unbounded domain \(y\in\mathbb{R}\). On the left and right far fields, Eq. (6) is evaluated in the uniform limits \(U(-\infty)=-1\) and \(U(+\infty)=+1\). The admissible branch is then selected by the asymptotic behavior
 
-- definition du profil de base ;
-- variable transverse `y`, nombre d'onde `alpha`, nombre de Mach `M` ;
-- difference entre regime subsonique et supersonique ;
-- interpretation de `c = c_r + i c_i`.
+\[
+\hat p(y) \sim A_- e^{\gamma_- y}\quad (y\to -\infty),\qquad
+\hat p(y) \sim A_+ e^{\gamma_+ y}\quad (y\to +\infty), \tag{9}
+\]
 
-#### 5.2.2. Probleme spectral lineaire
+with \(\Re(\gamma_-)>0\) and \(\Re(\gamma_+)<0\). In the subsonic regime, Eq. (9) produces decaying branches on both sides. In the supersonic regime, the same condition may combine decay and oscillation through the imaginary parts of \(\gamma_\pm\), while keeping the real-part sign convention that selects the outgoing admissible branch.
 
-- linearisation autour du profil de base ;
-- recherche de modes normaux ;
-- systeme aux valeurs propres ;
-- interpretation physique :
-  - `c_i > 0` : instable,
-  - `c_r` : vitesse de phase,
-  - vecteur propre : structure spatiale du mode.
+All practical solvers truncate the physical domain after this branch selection step. Two coordinate choices are used in the present work:
 
-#### 5.2.3. Reference a Blumen
+- direct integration in the physical variable \(y\);
+- an algebraic compactification
 
-- expliquer que Blumen sert de reference externe historique ;
-- préciser ce qui est robuste dans cette comparaison et ce qui l'est moins ;
-- introduire deja la difference de fiabilite entre `c_i` et `c_r` si besoin, mais sans anticiper tout le resultat.
+\[
+y = L_\xi \frac{\xi}{1-\xi^2}, \qquad \xi\in(-1,1), \tag{10}
+\]
 
-### Figures possibles
+where \(L_\xi\) is a mapping scale.
 
-- schema simple de la couche de cisaillement ;
-- exemple de mode en subsonique et supersonique ;
-- rappel visuel d'isolignes historiques type Blumen.
+The fast subsonic solver and the subsonic `mstab17` cross-check both integrate directly in \(y\) on a truncated interval \([-L,L]\), where \(L\) is estimated from the asymptotic decay rates. The supersonic single-case and modal-validation solver uses the same Riccati equations and the same asymptotic branch condition, with Eq. (10) activated in the mapped runs used for pointwise audit and modal reconstruction. The same algebraic mapping is also reused in the PINN.
 
-## 5.3. Solveurs classiques de reference
+### 3.4. Subsonic workflow
 
-### Objectif
+In the subsonic branch considered here, the unstable phase velocity is purely imaginary, so the eigenvalue search reduces to
 
-Montrer que l'etude PINN repose sur une reference numerique serieuse, pas sur une comparaison flottante.
+\[
+c = i c_i, \qquad c_i \ge 0. \tag{11}
+\]
 
-### Sous-sections conseillees
+Equation (11) collapses the search to one scalar degree of freedom. The fast subsonic solver integrates Eq. (8) directly in \(y\) from the two far fields toward a matching point \(y_m=0\), and it minimizes the Riccati mismatch
 
-#### 5.3.1. Solveur de tir
+\[
+\mathcal{J}(c_i) = \left|\gamma_L(y_m)-\gamma_R(y_m)\right|. \tag{12}
+\]
 
-- idee generale :
-  - integrer depuis les asymptotiques ;
-  - raccorder les solutions ;
-  - chercher `c_r, c_i` qui satisfont le probleme spectral.
-- ingredients a decrire :
-  - conditions asymptotiques,
-  - taille de boite,
-  - parametres `kappa`, `q`,
-  - matching.
+The subsonic production reference is not based on a single implementation only. In most of the parameter range, the scalar mismatch in Eq. (12) is sufficient and gives an efficient reference. Near neutrality, the workflow is complemented by a more complete `mstab17`-style solver that propagates the real Riccati state \([\kappa,q,\ln|\hat p|,\phi]\), first matches \((\kappa,q)\) at a positive matching point, and then aligns the reconstructed pressure amplitude near the layer center. Both solvers use the same pressure equation, the same far-field branch condition from Eq. (9), and the same direct \(y\)-space truncation; they differ only in the richness of the matching diagnostics.
 
-#### 5.3.2. Solveur GEP
+This is the reason why the subsonic reference is the first benchmark window used for the PINN. It combines a dense local reference for \(c_i\) with a branch-consistent modal cross-check on the same mathematical formulation.
 
-- discretisation spatiale ;
-- construction du probleme de valeurs propres generalise ;
-- role du mapping, de la boite et du maillage ;
-- selection des modes les plus instables.
+### 3.5. Supersonic workflow
 
-#### 5.3.3. Audit des solveurs classiques
+In the supersonic regime, the same pressure equation is retained and the branch selection still comes from Eq. (9). The practical change is that the search is now performed on a genuinely complex phase velocity \(c=c_r+i c_i\), and the local state is represented through
 
-- pourquoi il faut une reference avant de juger le PINN ;
-- ce qu'on compare :
-  - `c_i`,
-  - `c_r`,
-  - structure modale,
-  - continuite de branche.
+\[
+\gamma = \kappa + i q, \qquad
+\bigl[\kappa,\;q,\;\ln|\hat p|,\;\phi\bigr]. \tag{13}
+\]
 
-### Message attendu
+The pointwise supersonic solver used in this work is organized in two stages:
 
-Cette section doit faire comprendre que :
+1. a spectral stage that matches the Riccati variables \((\kappa,q)\) at the matching point and identifies \((c_r,c_i)\);
+2. an amplitude stage that adjusts the right-branch initialization so that the reconstructed pressure mode is aligned near the center.
 
-- le classique n'est pas trivial non plus ;
-- le shooting a ete retenu comme reference pratique la plus robuste ;
-- le GEP reste utile comme outil d'audit et de compréhension, mais plus sensible numeriquement.
+The solver is implemented both in direct \(y\) coordinates and, for the audited modal runs used in the present benchmark, with the mapped coordinate from Eq. (10). This two-stage structure is also the basis of the local spectral and modal audit used later in the paper: one first validates the eigenvalue, then validates the reconstructed mode.
 
-## 5.4. PINN : formulation et enjeux
+This distinction is important for the dataset organization. Some supersonic points are retained as modal references, while others are retained only as spectral references. The present paper therefore keeps a sharp separation between:
 
-### Objectif
+- pointwise validated modal anchors;
+- spectral-only validated points;
+- global reconstructions obtained from short validated continuations.
 
-Cette section doit etre plus detaillee que la physique, parce que c'est le coeur methodologique du papier.
+### 3.6. Role of the classical reference in this paper
 
-### Sous-sections conseillees
+The shooting solver is used here as a trusted local reference, not as a black-box generator of dense maps. This choice directly informs the PINN study. A neural benchmark is first asked to reproduce local classical solutions whose spectral and modal consistency has already been checked. The trusted training and validation domains are therefore delimited by the classical audit itself.
 
-#### 5.4.1. Rappel general sur les PINNs
+This benchmark logic also clarifies what is and is not tested at this stage. We do test local subsonic and supersonic reference points, local line continuations, modal densification around validated anchors, and branch-consistency diagnostics. We do not assume that every point of a dense supersonic map is already modally validated. That is precisely why the PINN study is organized progressively.
 
-- principe :
-  - un reseau approxime la solution ;
-  - les pertes viennent du residu de l'equation, des BC et de contraintes auxiliaires ;
-  - il n'y a pas necessairement de supervision dense sur toute la solution.
-- expliquer pourquoi c'est interessant pour un probleme spectral parametre.
+## 4. Physics-Informed Neural Networks for the Spectral Benchmark
 
-#### 5.4.2. Parametrisation choisie ici
+### 4.1. PINN principle
 
-- entree du reseau :
-  - `alpha`, eventuellement `Mach`, et variable spatiale ;
-- sorties :
-  - branche `c_i`,
-  - branche modale,
-  - eventuellement representation amplitude / phase ;
-- raison du decouplage entre quantite scalaire et structure modale.
+A physics-informed neural network is a neural approximation of an unknown function in which the governing equations are enforced during training. Instead of learning only from paired input-output data, the network is trained by minimizing a loss function that contains residual terms derived from the differential equations, together with boundary, normalization, matching, or auxiliary constraints.
 
-#### 5.4.3. Pertes physiques
+For the present problem, the network does not only represent a field. It must represent a spectral pair: an eigenvalue branch and a modal branch. The spectral branch returns the admissible phase velocity, while the modal branch returns the transverse structure associated with that phase velocity. The training objective therefore combines local differential admissibility, asymptotic branch consistency, normalization, and, when required, sparse classical guidance.
 
-- residu de l'equation ;
-- conditions aux bords / asymptotiques ;
-- normalisation du mode ;
-- contraintes de phase ou de localisation si utilisees.
+![Schematic view of the PINN workflow used in the benchmark. Inputs are the mapped transverse coordinate and the physical parameters. The network is split into a spectral branch and a modal branch; automatic differentiation provides the residual terms, and optional sparse classical anchors stabilize branch selection when needed.](assets/article/pinn_spectral_workflow.svg)
 
-#### 5.4.4. Pourquoi les problemes spectraux sont plus difficiles que des PDE standard
+Figure 1 summarizes this workflow.
 
-- non unicite modale ;
-- branches voisines ;
-- perte physique satisfaite par plusieurs structures ;
-- risque de bonne valeur propre mais mauvais mode ;
-- compromis global lorsqu'on entraine sur une bande de parametres.
+### 4.2. PINN parameterization used in this work
 
-#### 5.4.5. Guidage classique
+The present study starts from the same pressure formulation as the classical reference. In the fixed-Mach subsonic benchmarks, the network inputs are the mapped transverse coordinate \(\xi\) and the wavenumber \(\alpha\), with the algebraic mapping from Eq. (10). The physical coordinate is therefore not learned implicitly: it is prescribed explicitly through the same compactification used in the classical modal solver.
 
-- definir clairement les differents niveaux de guidage :
-  - guidage leger sur `c_i` ou `q`,
-  - ancrage spatial,
-  - supervision de mode partielle,
-  - supervision full-mode.
-- insister sur le fait que ce guidage n'est pas la methode par defaut, mais un outil controle pour les regimes difficiles.
+Two neural outputs are then distinguished:
 
-### Message attendu
+- a spectral branch, which returns \(c_i(\alpha)\) in the subsonic fixed-Mach benchmarks;
+- a modal branch, which returns either pressure components or Riccati components depending on the representation.
 
-Le lecteur doit comprendre que le vrai sujet n'est pas juste "un PINN pour un probleme aux valeurs propres", mais :
+In the benchmarks carried out so far, the Riccati representation is central because it matches the classical reference organization. The network predicts \((\kappa,q)\), then reconstructs pressure through the inverse use of Eq. (7). This choice turns the asymptotic information into boundary-band constraints on the Riccati variables and keeps the neural output aligned with the quantities used in the shooting solver.
 
-- comment representer et entrainer un PINN quand la branche physique n'est pas automatiquement identifiable.
+The present paper therefore emphasizes pressure-based and Riccati-based parameterizations rather than a direct four-field regression everywhere in the domain. Full-field supervision is used only as a targeted auxiliary ingredient in selected experiments.
 
-## 5.5. Protocole numerique
+### 4.3. Loss construction
 
-### Objectif
+The PINN loss is built around the same spectral equation as the classical reference. Depending on the chosen parameterization, the residual term is formed either from Eq. (6) itself or from its Riccati form in Eq. (8). Automatic differentiation supplies the derivatives in the mapped coordinate, and the chain rule is applied through Eq. (10).
 
-Fournir une section suffisamment reproductible, sans encore remplir tous les chiffres finaux.
+On top of the residual term, the benchmark uses four families of auxiliary constraints:
 
-### Sous-sections conseillees
+- asymptotic or boundary-band constraints derived from the far-field branch condition in Eq. (9);
+- normalization and phase-fixing constraints for the reconstructed mode;
+- matching constraints on Riccati variables or reconstructed pressure;
+- optional sparse classical supervision on spectral or modal quantities.
 
-#### 5.5.1. Domaine parametrique
+This organization mirrors the structure of the classical solver rather than replacing it by an unrelated neural objective. In particular, the PINN is asked to satisfy the same pressure equation, the same asymptotic branch logic, and the same distinction between spectral admissibility and modal consistency.
 
-- sous-sonique / sur-sonique ;
-- `Mach` fixe puis balayage en `alpha` ;
-- eventuelle extension vers `(alpha, Mach)`.
+### 4.4. Sparse guidance versus dense supervision
 
-#### 5.5.2. Definition des references
+The guiding principle of the benchmark is to maximize the role of physics-based training while keeping classical supervision as light as possible and as targeted as necessary. In practice, the present study treats the different forms of guidance hierarchically:
 
-- solveur classique retenu selon le regime ;
-- donnees Blumen utilisees comme audit externe ;
-- distinction entre quantites de calibration et quantites de validation.
+- sparse spectral supervision, for instance on \(c_i\), is the lightest form of classical information;
+- sparse Riccati or pressure anchors provide local modal orientation when the branch identity benefits from additional stabilization;
+- dense field supervision is reserved for specific ablation or repair experiments.
 
-#### 5.5.3. Metriques
+This hierarchy is motivated by the structure of the problem itself. A scalar constraint on the spectral branch is inexpensive and often highly informative, whereas dense field supervision is more restrictive and is used only where it improves modal continuity in a controlled way. The benchmark is therefore hybrid by construction: the physics residual remains the backbone of the training, and classical information is added only in forms that can be ablated and interpreted.
 
-- erreur sur `c_i` ;
-- erreur sur `c_r` ;
-- erreur modale `p_rel`, enveloppe, phase, position du pic ;
-- overlap modal si retenu.
+### 4.5. What was tested in the present study
 
-#### 5.5.4. Regimes de difficulte
+The benchmark sequence follows the current state of validation of the classical reference.
 
-Cette sous-section sera importante. Elle peut formaliser le decoupage :
+First, the PINN is tested in a one-dimensional fixed-Mach subsonic setting. This is the most controlled benchmark window because the classical reference is dense, the pressure equation in Eq. (6) is validated there branch by branch, and modal reconstruction can be audited against local shooting solutions. Within that window, the study includes:
 
-- regime central en `alpha` ;
-- bas `alpha` ;
-- haut `alpha`.
+- joint reconstruction of the spectral branch and the modal branch over a fixed-Mach interval in \(\alpha\);
+- sparse Riccati guidance and sparse \(q\)-/\(\gamma\)-based supervision;
+- targeted edge-focused modal repair over a reduced \(\alpha\)-window with a frozen spectral branch.
 
-### Message attendu
+Second, the benchmark is extended conceptually toward two-parameter subsonic learning in \((\alpha,M)\), while keeping the one-dimensional fixed-Mach study as the first validated layer of the methodology.
 
-Le protocole doit montrer qu'on n'evalue pas le PINN "en moyenne" seulement, mais qu'on regarde explicitement les regimes qui posent des problemes de selection de branche.
+Third, the supersonic study is organized around the validated classical reference rather than around a dense PINN regression target. In other words, the supersonic benchmark uses pointwise and linewise validated anchors to define the region where a PINN comparison is meaningful. A full dense supersonic PINN on the whole \((\alpha,M)\) domain is therefore not the starting point of the present paper; the reference is first stabilized locally and then used to delimit the benchmark window.
 
-## 5.6. Resultats
+### 4.6. Validation metrics
 
-### Remarque
+The validation protocol always distinguishes spectral accuracy from modal accuracy.
 
-Cette section est a garder comme squelette pour l'instant.
+For the spectral part, the natural scalar metrics are errors on \(c_i\), and on \(c_r\) whenever the reference branch is genuinely complex. For the modal part, the benchmark uses field-based discrepancies, envelope and phase diagnostics, branch-continuity checks, and visual overlays against the local classical reference.
 
-### Structure conseillee
+This separation is one of the central methodological points of the paper. A PINN may be spectrally accurate in the sense of Eq. (5) while still benefiting from additional modal guidance. Conversely, a mode may be visually coherent only if it is attached to the correct spectral branch. The benchmark is therefore evaluated through both pieces of information at once.
 
-#### 5.6.1. Validation de la reference classique
+## Proposed full paper plan
 
-- subsonique ;
-- supersonique ;
-- discussion de la robustesse relative de `c_i` et `c_r`.
+The paper should answer one central question:
 
-#### 5.6.2. Resultats PINN en regime subsonique central
+> To what extent can a PINN solve a non-selfadjoint compressible eigenvalue problem, that is, recover both the unstable eigenvalue and the physically relevant eigenmode over parameter space?
 
-- montrer qu'en regime central, la physique seule ou quasi seule suffit.
+For a physics audience, the paper must remain explicit about three distinct targets:
 
-#### 5.6.3. Regime bas-alpha
+1. recovering a scalar spectral quantity such as \(c_i\);
+2. recovering a full modal structure;
+3. preserving the correct branch identity when \((\alpha,M)\) varies.
 
-- montrer que la difficulte principale est l'identifiabilite du mode ;
-- montrer le benefice d'un guidage classique leger.
+These three targets should not be merged. A large part of the scientific interest of the paper is precisely to show that they do not have the same difficulty level.
 
-#### 5.6.4. Regime haut-alpha
+### Editorial line to keep throughout the paper
 
-- montrer que le verrou n'est plus `c_i`, mais la famille modale ;
-- comparer les niveaux de supervision testes.
+The paper should defend the following message:
 
-#### 5.6.5. Resultats supersoniques
+- the compressible KH equation is the same in subsonic and supersonic regimes;
+- however, the numerical reference and the PINN benchmark do not have the same level of difficulty in both regimes;
+- the right question is therefore not "does a PINN work or fail globally?";
+- the right question is "which part of the spectral problem can be learned reliably, under which constraints, and with which level of classical guidance?"
 
-- selon l'avancement, soit comme resultats complets ;
-- soit comme ouverture / section exploratoire.
+This framing justifies the split between subsonic and supersonic sections without pretending that the governing equation changes.
 
-## 5.7. Discussion
+### What Section 4 must explain for a physics audience
 
-### Objectif
+Because the target readership is not assumed to know PINNs well, Section 4 should not stay too compact. It should explicitly explain:
 
-Interpreter les resultats, pas juste les repeter.
+- what a PINN is in operational terms:
+  - inputs;
+  - outputs;
+  - collocation points;
+  - automatic differentiation;
+  - residual-based loss;
+  - optimization;
+- why eigenvalue problems are harder than standard forward PINN problems:
+  - the unknown is a pair \((c,\hat p)\), not only a field;
+  - the mode is defined up to normalization and phase;
+  - several nearby spectral branches may coexist;
+  - low residual does not automatically imply correct branch selection;
+- why this work uses two neural branches:
+  - a spectral branch for \(c_i\) or \((c_r,c_i)\);
+  - a modal branch for the transverse structure;
+- why the benchmark separates spectral and modal validation;
+- what "sparse classical guidance" means in practice and why it is used.
 
-### Points a discuter
+If needed, Section 4 can be expanded with one additional subsection:
 
-- pourquoi la physique seule marche dans certains regimes ;
-- pourquoi elle echoue aux extremites ;
-- pourquoi `c_i` est plus facile / plus robuste que le mode ;
-- pourquoi `c_r` est la quantite la plus delicate a utiliser comme verite forte ;
-- ce que cela dit sur les PINNs pour les problemes spectraux multi-branches.
+- `4.7 From local eigenpairs to a parameterized PINN map`
 
-### Message fort possible
+This subsection would explain the progressive strategy:
 
-La conclusion la plus interessante n'est peut-etre pas la performance brute du PINN, mais la mise en evidence d'une hiérarchie de difficultes :
+- local eigenpair recovery;
+- fixed-Mach branch learning;
+- narrow-band \((\alpha,M)\) learning;
+- later globalization.
 
-- scalar instability growth,
-- branch selection,
-- modal shape reconstruction.
+That would make the training logic much clearer to non-specialists of PINNs.
 
-## 5.8. Conclusion
+## 5. Subsonic PINN benchmark
 
-### A viser
+This section should be the first strong positive result of the paper. It is where the reader should become convinced that the methodology works on a controlled benchmark window.
 
-Une conclusion courte en trois blocs :
+### 5.1. Why start with the subsonic regime
 
-1. ce qui est etabli ;
-2. ce qui reste difficile ;
-3. ce que cela ouvre pour la suite.
+Main message:
 
-### Exemple de message final
+- same governing equation as before;
+- but the subsonic reference is denser, cleaner, and more branch-consistent;
+- this makes it the natural first benchmark window for evaluating whether a PINN can recover eigenpairs.
 
-- les solveurs classiques restent indispensables pour verrouiller les references ;
-- les PINNs peuvent reproduire correctement une large partie du probleme ;
-- mais les regimes de faible ou forte difficulte modale demandent une hybridation controlee.
+### 5.2. Local and fixed-Mach benchmark setup
 
-## 5.9. Appendices possibles
+Explain clearly what is benchmarked first:
 
-- details de derivation du probleme spectral ;
-- details des solveurs classiques ;
-- details d'implementation du PINN ;
-- choix des hyperparametres ;
-- figures supplementaires de modes ;
-- audit de sensibilite numerique.
+- fixed-Mach lines;
+- local classical references at `M = 0.5` and `M = 0.6`;
+- comparison metrics on:
+  - \(c_i\);
+  - pressure mode;
+  - reconstructed \(\hat \rho\), \(\hat u\), \(\hat v\);
+  - amplitude and phase errors.
 
-## 6. Plan de figures
+This subsection should establish the benchmark protocol before showing results.
 
-Ce plan peut servir tres tot, meme avant les resultats finaux.
+### 5.3. What pure physics recovers locally, and what it does not
 
-### Figure 1
+This subsection is important scientifically. It should not be hidden.
 
-Schema du probleme physique :
+Main message:
 
-- profil de base ;
-- definition de `alpha`, `Mach`, `y` ;
-- interpretation de `c_r`, `c_i`.
+- a pure-PINN local eigenpair is a meaningful target;
+- however, asking a PINN to learn a full fixed-Mach branch `c_i(\alpha)` from scratch with physics only is too ambitious in the present formulation;
+- the negative fixed-Mach run is therefore an ablation result, not a failure to be buried.
 
-### Figure 2
+This is where the negative run around job `1936761` belongs:
 
-Reference classique subsonique :
+- not as the headline result;
+- but as evidence that branch learning is harder than local eigenpair recovery.
 
-- carte de `c_i` ou coupe representative ;
-- exemple de mode de reference.
+### 5.4. Hybrid fixed-Mach branch learning
 
-### Figure 3
+This subsection should present the successful fixed-Mach subsonic runs:
 
-Reference classique supersonique :
+- `M = 0.5` reference;
+- `M = 0.6` core reconstruction;
+- `M = 0.6` edge-focused modal repair.
 
-- branche shooting ;
-- comparaison a Blumen ;
-- exemple modal.
+Main message:
 
-### Figure 4
+- with the present loss design, the PINN can recover accurate subsonic growth rates and good modal structures over validated \(\alpha\)-intervals;
+- sparse guidance is especially useful for stabilizing the modal branch without destroying the spectral one.
 
-Architecture ou schema conceptuel du PINN :
+### 5.5. First two-parameter subsonic map
 
-- entrees ;
-- sorties ;
-- pertes ;
-- interactions entre branche `c_i` et branche mode.
+This is the place for the `M \in [0.5,0.6]` pilot band, and possibly the first extension toward `0.7`.
 
-### Figure 5
+Main message:
 
-Illustration des trois regimes en `alpha` :
+- a parameterized PINN can already learn a nontrivial \((\alpha,M)\) dependence;
+- interpolation at intermediate Mach is physically meaningful;
+- extension in Mach is possible but must be stabilized to avoid degrading already learned modal content.
 
-- regime central ;
-- bas `alpha` ;
-- haut `alpha`.
+This subsection is where the paper should first show the final target interface:
 
-### Figure 6
+- input: \((\xi,\alpha,M)\) or \((\alpha,M)\);
+- output: mode and spectral quantity.
 
-Exemple de succes du PINN en regime central.
+### 5.6. Subsonic synthesis
 
-### Figure 7
+End the section with a short synthesis that answers explicitly:
 
-Exemple bas-alpha :
+- what has been validated for eigenvalues;
+- what has been validated for modes;
+- what remains out of scope at this stage.
 
-- echec pur physique ;
-- reparation par guidage leger.
+Recommended conclusion of the section:
 
-### Figure 8
+- local eigenpairs: yes;
+- fixed-Mach branches: yes, with sparse guidance;
+- narrow-band \((\alpha,M)\) map: yes, in a controlled window;
+- global pure-physics branch learning from scratch: not yet.
 
-Exemple haut-alpha :
+## 6. Supersonic PINN benchmark
 
-- bon `c_i`, mauvais mode ;
-- puis amelioration par supervision classique.
+This section should not mimic the subsonic one mechanically. Its role is different: first delimit the trustworthy benchmark window, then evaluate the PINN only where the reference is meaningful.
 
-### Figure 9
+### 6.1. Why the supersonic regime is harder
 
-Synthese des performances selon les regimes.
+This subsection should make the difficulty explicit, without turning into a literature review digression.
 
-## 7. Plan de tableaux
+Main message:
 
-### Tableau 1
+- same pressure equation;
+- but more delicate asymptotic behavior;
+- coexistence of nearby modal families;
+- weaker decay and stronger branch ambiguity;
+- modal continuity is therefore much harder to establish than spectral continuity.
 
-Resume des solveurs classiques :
+This is where the distinction between `gold`, `silver`, and `branch-ambiguous` reference points should be introduced in paper form.
 
-- shooting,
-- GEP,
-- domaine d'utilisation,
-- points forts,
-- limites.
+### 6.2. Construction of a usable supersonic reference
 
-### Tableau 2
+Present the actual reference hierarchy:
 
-Resume des variantes PINN :
+- `gold`: locally validated eigenvalue and mode;
+- `silver`: reliable spectral point without full modal validation;
+- `unresolved / branch ambiguous`: not used as hard benchmark points.
 
-- physique seule,
-- guidage leger,
-- supervision modale,
-- full-mode,
-- two-stage.
+Main message:
 
-### Tableau 3
+- a continuous modal surface is not required for the benchmark to be scientifically usable;
+- what matters is a trustworthy pointwise and linewise reference with explicit confidence levels.
 
-Erreurs quantitatives par regime :
+### 6.3. Supersonic benchmark windows
 
-- `c_i`,
-- `c_r`,
-- metriques modales.
+This subsection should define where the PINN is allowed to be compared:
 
-## 8. Contributions possibles a annoncer
+- spectral benchmark on `gold + silver`;
+- modal benchmark only on `gold`;
+- short line continuations only where the branch identity is already controlled.
 
-Il faudra choisir une formulation sobre. Une liste plausible :
+This is the right place to present the current validated or near-validated Mach windows:
 
-1. formulation d'un benchmark spectral compressible pour PINNs, base sur une reference classique auditee ;
-2. analyse comparative entre solveur de tir et GEP pour la reconstruction des branches instables ;
-3. mise en evidence de regimes de difficulte distincts en `alpha` ;
-4. proposition d'une strategie hybride graduelle pour la reconstruction PINN des modes propres ;
-5. discussion de l'usage prudent de references historiques digitalisees, notamment pour `c_r`.
+- stable anchors around `M = 1.2`, `1.3`, `1.5`;
+- candidate transition zone near `M = 1.4`;
+- extension targets toward `M = 1.1` and `M = 1.6-1.8`.
 
-## 9. Ce qu'il vaut mieux ne pas promettre trop tot
+### 6.4. Supersonic PINN tests
 
-Pour rester credible, il vaut mieux eviter de promettre trop vite :
+This subsection should report the actual supersonic PINN experiments when they are ready. The right order is:
 
-- une couverture complete du supersonique si ce n'est pas verrouille ;
-- une superiorite generale des PINNs sur les solveurs classiques ;
-- une reconstruction parfaite de `c_r` dans toutes les zones ;
-- une methode universelle independante du regime.
+1. local pointwise PINN against `gold` points;
+2. short linewise PINN tests on branch-consistent windows;
+3. only then broader \((\alpha,M)\) generalization.
 
-## 10. Message editorial a garder en tete
+Main message:
 
-Si l'article doit passer dans un journal de physique numerique, il faut privilegier :
+- in supersonic flow, the neural question must be subordinated to branch validity of the reference;
+- a PINN can only be judged where the classical benchmark is itself trusted.
 
-- un probleme bien pose ;
-- des references classiques solides ;
-- une analyse honnete des echecs ;
-- une contribution methodologique claire ;
-- et une discussion precise sur ce que les PINNs apportent, et sur ce qu'ils n'apportent pas encore.
+### 6.5. Supersonic synthesis
 
-Le papier sera probablement plus fort s'il raconte :
+The section should end by answering:
 
-- comment un probleme spectral apparemment simple cache une vraie difficulte de selection modale,
-- et comment cette difficulte force a concevoir un protocole hybride propre,
+- what is already validated spectrally;
+- what is already validated modalement;
+- what remains only exploratory.
 
-plutot que s'il essaie trop tot de vendre un "PINN general qui marche partout".
+The important point is to avoid overstating continuity where the reference itself is branch-ambiguous.
+
+## 7. Discussion
+
+This section should be written as the answer to the main scientific question, not as a loose recap.
+
+### 7.1. What a PINN can recover in a spectral hydrodynamic problem
+
+Main message:
+
+- PINNs can recover meaningful local eigenpairs;
+- they can also learn controlled parameterized maps when the reference geometry is sufficiently stable;
+- they are not automatically robust branch selectors in non-selfadjoint spectral problems.
+
+### 7.2. What remains difficult
+
+This subsection should isolate the hard points:
+
+- branch competition;
+- weakly decaying or radiative supersonic modes;
+- mismatch between low residual and correct spectral identity;
+- instability of global pure-physics branch regression.
+
+### 7.3. Role of classical guidance
+
+This part should be very clear, because it is likely to matter to reviewers.
+
+Main message:
+
+- the point of the paper is not to hide classical guidance;
+- it is to measure how much guidance is needed and where;
+- sparse spectral guidance and sparse modal anchors are often much more efficient than dense field supervision;
+- the amount of required guidance depends strongly on the spectral regime.
+
+### 7.4. Implications beyond Kelvin-Helmholtz
+
+Broaden the message carefully:
+
+- the workflow is relevant for other non-selfadjoint eigenvalue problems;
+- especially where eigenvalues and eigenfunctions must be learned jointly and branch identity matters;
+- the paper therefore contributes not only a KH benchmark, but a methodology for spectral PINNs.
+
+## 8. Conclusion
+
+The conclusion should be short and concrete.
+
+It should restate three levels of achievement:
+
+1. what has been shown at the local eigenpair level;
+2. what has been shown at the parameterized-map level;
+3. what still requires stronger reference construction or guidance.
+
+Recommended final message:
+
+- the paper does not claim that a PINN can replace every classical eigenvalue solver from scratch;
+- it shows more precisely under which conditions a PINN can reconstruct compressible KH eigenvalues and eigenmodes;
+- and it identifies where classical branch-resolved reference information remains essential.
+
+## Suggested figure logic
+
+The paper should probably be organized around a small number of high-value figures instead of many similar overlays.
+
+Suggested minimal set:
+
+1. physical setup + definition of \((\alpha,M,c)\);
+2. PINN workflow schematic;
+3. classical subsonic reference example:
+   - \(c_i(\alpha)\) line;
+   - one or two modal reconstructions;
+4. subsonic fixed-Mach PINN benchmark:
+   - \(c_i\) error;
+   - modal overlays;
+5. first 2D subsonic band:
+   - learned \(c_i(\alpha,M)\);
+   - error heatmap;
+6. supersonic reference hierarchy:
+   - `gold`, `silver`, `ambiguous`;
+7. supersonic local or linewise PINN comparisons on trusted windows;
+8. summary figure comparing what is validated:
+   - local eigenpair;
+   - branch continuation;
+   - global parameterized learning.
+
+## Suggested table logic
+
+At least three compact tables would help:
+
+1. classical reference status by regime:
+   - subsonic dense lines;
+   - supersonic gold/silver counts;
+2. subsonic PINN metrics:
+   - \(c_i\) errors;
+   - pressure and modal errors;
+3. supersonic PINN metrics on trusted windows:
+   - spectral metrics on `gold + silver`;
+   - modal metrics on `gold`.
+
+## Claims to defend, and claims to avoid
+
+Claims to defend:
+
+- PINNs can solve local compressible KH eigenvalue problems;
+- branch-consistent modal reconstruction is harder than scalar spectral recovery;
+- subsonic and supersonic regimes require different benchmark logic even when the governing equation is the same;
+- sparse classical guidance can be an efficient stabilizer rather than a contradiction of the PINN approach.
+
+Claims to avoid unless the final results really support them:
+
+- a fully unsupervised global \((\alpha,M)\) PINN from scratch over the whole domain;
+- a continuous and fully validated supersonic modal surface everywhere;
+- the idea that low physics residual alone guarantees correct spectral branch selection.
