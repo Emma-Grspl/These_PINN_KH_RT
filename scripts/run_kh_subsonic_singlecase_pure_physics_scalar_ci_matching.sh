@@ -6,6 +6,8 @@ cd "${ROOT_DIR}"
 
 ALPHA_VALUE="${ALPHA_VALUE:-0.5}"
 MACH_VALUE="${MACH_VALUE:-0.5}"
+ALPHA_TAG="$(printf '%0.3f' "${ALPHA_VALUE}" | tr -d '.')"
+MACH_TAG="$(printf '%0.3f' "${MACH_VALUE}" | tr -d '.')"
 
 python3 scripts/train_kh_subsonic_pinn.py \
   --mach "${MACH_VALUE}" \
@@ -67,4 +69,4 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --mode-representation riccati \
   --mode-experts 1 \
   --device "${DEVICE:-cpu}" \
-  --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_singlecase_pure_a050_m050_scalar_ci_matching}"
+  --output-dir "${OUTPUT_DIR:-model_saved/kh_subsonic_singlecase_pure_a${ALPHA_TAG}_m${MACH_TAG}_scalar_ci_matching}"

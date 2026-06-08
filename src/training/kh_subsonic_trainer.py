@@ -232,7 +232,8 @@ class KingOfTheHill:
 def sampling_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
     alpha_min = float(cfg.alpha_min) if cfg.sampling_alpha_min is None else float(cfg.sampling_alpha_min)
     alpha_max = float(cfg.alpha_max) if cfg.sampling_alpha_max is None else float(cfg.sampling_alpha_max)
-    if alpha_max <= alpha_min:
+    # Single-case fixed-alpha runs intentionally use a degenerate interval.
+    if alpha_max < alpha_min:
         raise ValueError(f"Invalid sampling alpha bounds: [{alpha_min}, {alpha_max}]")
     return alpha_min, alpha_max
 
@@ -240,7 +241,7 @@ def sampling_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
 def audit_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
     alpha_min = float(cfg.alpha_min) if cfg.audit_alpha_min is None else float(cfg.audit_alpha_min)
     alpha_max = float(cfg.alpha_max) if cfg.audit_alpha_max is None else float(cfg.audit_alpha_max)
-    if alpha_max <= alpha_min:
+    if alpha_max < alpha_min:
         raise ValueError(f"Invalid audit alpha bounds: [{alpha_min}, {alpha_max}]")
     return alpha_min, alpha_max
 
