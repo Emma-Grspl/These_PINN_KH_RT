@@ -125,9 +125,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--riccati-boundary-band-start", type=float, default=0.94)
     parser.add_argument("--riccati-boundary-band-end", type=float, default=0.995)
     parser.add_argument("--w-riccati-shooting-match", type=float, default=0.0)
+    parser.add_argument("--w-riccati-shooting-path", type=float, default=0.0)
     parser.add_argument("--w-riccati-ci-local-min", type=float, default=0.0)
     parser.add_argument("--riccati-shooting-steps", type=int, default=256)
     parser.add_argument("--riccati-shooting-xi-boundary", type=float, default=0.995)
+    parser.add_argument("--riccati-shooting-path-points", type=int, default=33)
     parser.add_argument("--riccati-ci-local-min-delta-abs", type=float, default=0.005)
     parser.add_argument("--riccati-ci-local-min-delta-rel", type=float, default=0.05)
     parser.add_argument("--riccati-ci-local-min-margin", type=float, default=0.0)
@@ -245,9 +247,11 @@ def main() -> None:
         riccati_boundary_band_start=args.riccati_boundary_band_start,
         riccati_boundary_band_end=args.riccati_boundary_band_end,
         w_riccati_shooting_match=args.w_riccati_shooting_match,
+        w_riccati_shooting_path=args.w_riccati_shooting_path,
         w_riccati_ci_local_min=args.w_riccati_ci_local_min,
         riccati_shooting_steps=args.riccati_shooting_steps,
         riccati_shooting_xi_boundary=args.riccati_shooting_xi_boundary,
+        riccati_shooting_path_points=args.riccati_shooting_path_points,
         riccati_ci_local_min_delta_abs=args.riccati_ci_local_min_delta_abs,
         riccati_ci_local_min_delta_rel=args.riccati_ci_local_min_delta_rel,
         riccati_ci_local_min_margin=args.riccati_ci_local_min_margin,

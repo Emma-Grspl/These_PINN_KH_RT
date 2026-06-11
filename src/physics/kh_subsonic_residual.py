@@ -451,6 +451,150 @@ def riccati_shooting_match_loss(
     ).mean()
 
 
+def riccati_shooting_path_loss(
+    model,
+    alpha: torch.Tensor,
+    mach: float,
+    *,
+    n_steps: int,
+    xi_boundary: float,
+    n_points: int,
+) -> torch.Tensor:
+    if n_steps <= 0 or n_points < 2:
+        return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+
+    alpha_samples = alpha[:, 0]
+    ci_samples = model.get_ci(alpha)[:, 0]
+    mapping_scale = model.get_mapping_scale()
+
+    losses: list[torch.Tensor] = []
+    for alpha_val, ci_val in zip(alpha_samples, ci_samples):
+        alpha_scalar = alpha_val.view(1)
+        ci_scalar = ci_val.view(1)
+        sample_loss = _riccati_shooting_path_loss_from_sample(
+            model,
+            mapping_scale,
+            alpha_scalar,
+            ci_scalar,
+            mach,
+            n_steps=n_steps,
+            xi_boundary=xi_boundary,
+            n_points=n_points,
+        )
+        losses.append(sample_loss)
+
+    if not losses:
+        return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
+    return torch.stack(losses).mean()
+
+
+def _riccati_rk4_step(
+    y_val: torch.Tensor,
+    gamma_val: torch.Tensor,
+    h: torch.Tensor,
+    alpha_val: torch.Tensor,
+    mach: float,
+    ci_val: torch.Tensor,
+) -> torch.Tensor:
+    k1 = riccati_gamma_rhs(y_val, gamma_val, alpha_val, mach, ci_val)
+    k2 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k1, alpha_val, mach, ci_val)
+    k3 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k2, alpha_val, mach, ci_val)
+    k4 = riccati_gamma_rhs(y_val + h, gamma_val + h * k3, alpha_val, mach, ci_val)
+    return gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+
+
+def _riccati_segment_integrate(
+    y_start: torch.Tensor,
+    y_end: torch.Tensor,
+    gamma_start: torch.Tensor,
+    alpha_val: torch.Tensor,
+    mach: float,
+    ci_val: torch.Tensor,
+    *,
+    n_substeps: int,
+) -> torch.Tensor:
+    if n_substeps <= 0:
+        return gamma_start
+    gamma_curr = gamma_start
+    y_curr = y_start
+    h = (y_end - y_start) / float(n_substeps)
+    for _ in range(int(n_substeps)):
+        gamma_curr = _riccati_rk4_step(y_curr, gamma_curr, h, alpha_val, mach, ci_val)
+        y_curr = y_curr + h
+    return gamma_curr
+
+
+def _riccati_shooting_path_loss_from_sample(
+    model,
+    mapping_scale: torch.Tensor,
+    alpha_scalar: torch.Tensor,
+    ci_scalar: torch.Tensor,
+    mach: float,
+    *,
+    n_steps: int,
+    xi_boundary: float,
+    n_points: int,
+) -> torch.Tensor:
+    device = alpha_scalar.device
+    dtype = alpha_scalar.dtype
+
+    xi_left = torch.linspace(-float(xi_boundary), 0.0, int(n_points), device=device, dtype=dtype).view(-1, 1)
+    xi_right = torch.linspace(0.0, float(xi_boundary), int(n_points), device=device, dtype=dtype).view(-1, 1)
+
+    alpha_left = alpha_scalar.view(1, 1).repeat(xi_left.shape[0], 1)
+    alpha_right = alpha_scalar.view(1, 1).repeat(xi_right.shape[0], 1)
+
+    pred_left = model(xi_left, alpha_left)
+    pred_right = model(xi_right, alpha_right)
+    gamma_left_pred = torch.complex(pred_left[:, 0], pred_left[:, 1])
+    gamma_right_pred = torch.complex(pred_right[:, 0], pred_right[:, 1])
+
+    y_left = xi_to_y(xi_left, mapping_scale)[:, 0]
+    y_right = xi_to_y(xi_right, mapping_scale)[:, 0]
+
+    gamma_left_0, gamma_right_0 = asymptotic_riccati_gammas(alpha_scalar, mach, ci_scalar)
+    gamma_left_curr = gamma_left_0[0]
+    gamma_right_curr = gamma_right_0[0]
+
+    left_path = [gamma_left_curr]
+    right_desc_path = [gamma_right_curr]
+
+    n_segments = max(int(n_points) - 1, 1)
+    n_substeps = max(int(n_steps) // n_segments, 1)
+
+    for idx in range(1, y_left.shape[0]):
+        gamma_left_curr = _riccati_segment_integrate(
+            y_left[idx - 1],
+            y_left[idx],
+            gamma_left_curr,
+            alpha_scalar[0],
+            mach,
+            ci_scalar[0],
+            n_substeps=n_substeps,
+        )
+        left_path.append(gamma_left_curr)
+
+    y_right_desc = torch.flip(y_right, dims=[0])
+    for idx in range(1, y_right_desc.shape[0]):
+        gamma_right_curr = _riccati_segment_integrate(
+            y_right_desc[idx - 1],
+            y_right_desc[idx],
+            gamma_right_curr,
+            alpha_scalar[0],
+            mach,
+            ci_scalar[0],
+            n_substeps=n_substeps,
+        )
+        right_desc_path.append(gamma_right_curr)
+
+    gamma_left_target = torch.stack(left_path)
+    gamma_right_target = torch.flip(torch.stack(right_desc_path), dims=[0])
+
+    left_loss = (gamma_left_pred.real - gamma_left_target.real).pow(2) + (gamma_left_pred.imag - gamma_left_target.imag).pow(2)
+    right_loss = (gamma_right_pred.real - gamma_right_target.real).pow(2) + (gamma_right_pred.imag - gamma_right_target.imag).pow(2)
+    return 0.5 * (left_loss.mean() + right_loss.mean())
+
+
 def _riccati_shooting_match_loss_from_samples(
     mapping_scale: torch.Tensor,
     alpha_samples: torch.Tensor,
@@ -469,11 +613,7 @@ def _riccati_shooting_match_loss_from_samples(
         return torch.zeros(alpha_samples.shape[0], device=alpha_samples.device, dtype=alpha_samples.dtype)
 
     def rk4_step(y_val: torch.Tensor, gamma_val: torch.Tensor, h: torch.Tensor, alpha_val: torch.Tensor, ci_val: torch.Tensor) -> torch.Tensor:
-        k1 = riccati_gamma_rhs(y_val, gamma_val, alpha_val, mach, ci_val)
-        k2 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k1, alpha_val, mach, ci_val)
-        k3 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k2, alpha_val, mach, ci_val)
-        k4 = riccati_gamma_rhs(y_val + h, gamma_val + h * k3, alpha_val, mach, ci_val)
-        return gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+        return _riccati_rk4_step(y_val, gamma_val, h, alpha_val, mach, ci_val)
 
     losses: list[torch.Tensor] = []
     for alpha_val, ci_val in zip(alpha_samples, ci_samples):

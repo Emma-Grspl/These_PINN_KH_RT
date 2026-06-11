@@ -16,7 +16,9 @@ W_RICCATI_CENTER_PEAK="${W_RICCATI_CENTER_PEAK:-0.0}"
 W_RICCATI_BOUNDARY_BAND_KAPPA="${W_RICCATI_BOUNDARY_BAND_KAPPA:-0.5}"
 W_RICCATI_BOUNDARY_BAND_Q="${W_RICCATI_BOUNDARY_BAND_Q:-2.0}"
 W_RICCATI_SHOOTING_MATCH="${W_RICCATI_SHOOTING_MATCH:-50.0}"
+W_RICCATI_SHOOTING_PATH="${W_RICCATI_SHOOTING_PATH:-0.0}"
 W_RICCATI_CI_LOCAL_MIN="${W_RICCATI_CI_LOCAL_MIN:-20.0}"
+RICCATI_SHOOTING_PATH_POINTS="${RICCATI_SHOOTING_PATH_POINTS:-33}"
 RICCATI_CI_LOCAL_MIN_DELTA_ABS="${RICCATI_CI_LOCAL_MIN_DELTA_ABS:-0.002}"
 RICCATI_CI_LOCAL_MIN_DELTA_REL="${RICCATI_CI_LOCAL_MIN_DELTA_REL:-0.02}"
 RICCATI_CI_LOCAL_MIN_MARGIN="${RICCATI_CI_LOCAL_MIN_MARGIN:-1e-4}"
@@ -63,6 +65,7 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --w-riccati-boundary-band-kappa "${W_RICCATI_BOUNDARY_BAND_KAPPA}" \
   --w-riccati-boundary-band-q "${W_RICCATI_BOUNDARY_BAND_Q}" \
   --w-riccati-shooting-match "${W_RICCATI_SHOOTING_MATCH}" \
+  --w-riccati-shooting-path "${W_RICCATI_SHOOTING_PATH}" \
   --w-riccati-ci-local-min "${W_RICCATI_CI_LOCAL_MIN}" \
   --riccati-center-xi 0.0 \
   --riccati-boundary-band-points 32 \
@@ -70,6 +73,7 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --riccati-boundary-band-end 0.995 \
   --riccati-shooting-steps 512 \
   --riccati-shooting-xi-boundary 0.995 \
+  --riccati-shooting-path-points "${RICCATI_SHOOTING_PATH_POINTS}" \
   --riccati-ci-local-min-delta-abs "${RICCATI_CI_LOCAL_MIN_DELTA_ABS}" \
   --riccati-ci-local-min-delta-rel "${RICCATI_CI_LOCAL_MIN_DELTA_REL}" \
   --riccati-ci-local-min-margin "${RICCATI_CI_LOCAL_MIN_MARGIN}" \

@@ -173,6 +173,85 @@ But :
 - etablir ou non qu'un eigenpair isole est identifiable en pur PINN
 - mesurer la robustesse en fonction de `alpha` et `Mach`
 
+### Decision immediate sur la Phase A-bis
+
+La campagne actuellement en cours est une **Phase A-bis** locale, toujours sur un eigenpair isole `(\alpha, M)` avec `c_i` scalaire.
+
+La loss active dans cette Phase A-bis est volontairement plus spectrale que dans la Phase A initiale :
+
+- residu PDE Riccati
+- BC asymptotiques sur `\kappa` et `q`
+- contrainte de bande asymptotique pres des bords
+- matching de shooting gauche-droite
+- critere de minimum local en `c_i`
+- contraintes de forme au centre fortement allegees
+
+La decision methodologique retenue est la suivante :
+
+- **ne pas ajouter tout de suite de nouveaux termes plus lourds**
+- **attendre d'abord les resultats complets de la Phase A-bis**
+- juger en priorite si `c_i` cesse enfin de deriver quand `p_rel` s'ameliore
+
+Le critere de lecture principal est :
+
+- si `p_rel` baisse mais que `ci_mae` reste faux, alors la physique locale contraint encore mal la selection spectrale ;
+- si `p_rel` et `ci_mae` baissent ensemble sur au moins un cas central, alors la Phase A-bis apporte deja un vrai gain.
+
+### Prochain terme prioritaire si la Phase A-bis echoue encore
+
+Si la Phase A-bis reste dans le regime :
+
+- mode partiellement correct
+- `c_i` encore faux ou instable
+
+alors le **prochain ajout prioritaire** ne sera pas une nouvelle famille de priors de forme, mais un terme de **coherence de trajectoire de shooting**, note ici `L_shoot_path`.
+
+Idee :
+
+- comparer la sortie Riccati du reseau `\gamma_\theta(y)` aux deux branches de shooting reconstruites pour le `c_i` predit :
+  - branche gauche `\gamma_L^{RK}(y; c_i)`
+  - branche droite `\gamma_R^{RK}(y; c_i)`
+
+Sous forme schematique :
+
+```text
+L_shoot_path
+= moyenne_{y<0} |gamma_theta(y) - gamma_L^RK(y; c_i)|^2
++ moyenne_{y>0} |gamma_theta(y) - gamma_R^RK(y; c_i)|^2
+```
+
+Interet :
+
+- `L_shoot` actuel ne contraint que le mismatch scalaire au point de raccord ;
+- `L_shoot_path` contraindrait toute la trajectoire Riccati associee au `c_i` predit ;
+- c'est donc le terme le plus naturel pour rapprocher le PINN d'un vrai **neural shooting**.
+
+Ordre de priorite retenu :
+
+1. attendre les resultats complets de la Phase A-bis ;
+2. si `c_i` reste mal verrouille, ajouter `L_shoot_path` ;
+3. ensuite seulement considerer un terme de type `gap spectral` multi-offset autour de `c_i` ;
+4. garder pour plus tard les termes plus heuristiques comme :
+   - courbure locale discrete de `J(c_i)` ;
+   - contraintes de symetrie explicites.
+
+Conclusion pratique :
+
+- **oui**, le meilleur choix actuel est d'attendre les resultats de la Phase A-bis ;
+- **oui**, si cette etape ne suffit pas, le premier ajout a coder sera `L_shoot_path`.
+
+Mise a jour :
+
+- la **Phase A-ter** est maintenant ouverte avec `L_shoot_path` actif ;
+- le premier cas prioritaire reste `alpha = 0.65`, `Mach = 0.60` ;
+- l'objectif est de verifier si contraindre toute la trajectoire Riccati aide enfin a verrouiller `c_i`.
+
+Piste analytique a mener en parallele :
+
+- une analyse asymptotique de l'equation modale, de type WKB / Airy, peut servir plus tard a construire des contraintes de forme mieux fondees ;
+- cette piste est pertinente, mais elle doit rester seconde tant qu'on n'a pas derive des formes fiables pour le regime subsonique considere ;
+- en pratique, `L_shoot_path` reste le test numerique immediat le plus direct.
+
 ### Niveau 2 - Continuation pure PINN a Mach fixe
 
 Objectif :
