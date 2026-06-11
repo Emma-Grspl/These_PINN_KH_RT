@@ -159,25 +159,80 @@ def load_digitized_curves(data_dir: str | Path, *, calibrate_mach: bool = True) 
     return curves
 
 
-def estimate_blumen_ci(alpha: float, mach: float, curves: list[dict]) -> float:
-    """Estime c_i depuis les isolignes principales de Blumen.
+def curve_intersections_at_mach(curve: dict, mach: float) -> list[float]:
+    """Return all alpha intersections between one digitized polyline and Mach = const.
 
-    Pour chaque niveau c_i, on interpole alpha(M) a Mach fixe, puis on interpole
-    le niveau c_i tel que alpha(M, c_i)=alpha. Cela evite de trier une courbe
-    fermee/non-monotone par alpha, ce qui cassait l'estimation precedente.
+    The raw digitization order is preserved. This matters for the supersonic
+    Blumen isolines because several `c_i = const` curves are not single-valued
+    in Mach near their turning points.
+    """
+    df = curve["data"][["Mach", "alpha"]].dropna().reset_index(drop=True)
+    if len(df) < 2:
+        return []
+
+    mach_values = df["Mach"].to_numpy(dtype=float)
+    alpha_values = df["alpha"].to_numpy(dtype=float)
+    intersections: list[float] = []
+
+    for i in range(len(df) - 1):
+        x0 = float(mach_values[i])
+        x1 = float(mach_values[i + 1])
+        y0 = float(alpha_values[i])
+        y1 = float(alpha_values[i + 1])
+
+        if (mach - x0) * (mach - x1) > 0:
+            continue
+
+        if np.isclose(x0, x1):
+            if np.isclose(mach, x0):
+                intersections.extend([y0, y1])
+            continue
+
+        t = (mach - x0) / (x1 - x0)
+        if 0.0 <= t <= 1.0:
+            intersections.append(y0 + t * (y1 - y0))
+
+    intersections = sorted(float(value) for value in intersections)
+    dedup: list[float] = []
+    for value in intersections:
+        if not dedup or not np.isclose(value, dedup[-1], atol=1e-8):
+            dedup.append(value)
+    return dedup
+
+
+def principal_alpha_at_mach(curve: dict, mach: float) -> float:
+    """Return the principal-branch alpha at fixed Mach for one `c_i` isoline.
+
+    For the benchmark against the main Blumen sheet, we keep the upper
+    intersection when several branches exist at the same Mach.
+    """
+    intersections = curve_intersections_at_mach(curve, mach)
+    if not intersections:
+        return float("nan")
+    return float(max(intersections))
+
+
+def estimate_blumen_ci(alpha: float, mach: float, curves: list[dict]) -> float:
+    """Estimate the principal Blumen `c_i` at fixed `(alpha, Mach)`.
+
+    Each digitized `c_i = const` curve is treated as a polyline in its raw
+    digitization order. At fixed Mach, we intersect that polyline with the
+    vertical line `M = mach` and keep the upper intersection, which corresponds
+    to the principal branch used in the paper figure.
     """
     anchors: list[tuple[float, float]] = []
     for curve in curves:
         if curve.get("family") != "ci_level" or curve.get("level") is None:
             continue
-        df = curve["data"][["Mach", "alpha"]].dropna().sort_values("Mach").reset_index(drop=True)
+        df = curve["data"][["Mach", "alpha"]].dropna().reset_index(drop=True)
         if len(df) < 2:
             continue
         mach_values = df["Mach"].to_numpy(dtype=float)
-        alpha_values = df["alpha"].to_numpy(dtype=float)
         if mach < float(np.min(mach_values)) or mach > float(np.max(mach_values)):
             continue
-        alpha_on_curve = float(np.interp(mach, mach_values, alpha_values))
+        alpha_on_curve = principal_alpha_at_mach(curve, mach)
+        if not np.isfinite(alpha_on_curve):
+            continue
         anchors.append((alpha_on_curve, float(curve["level"])))
 
     if len(anchors) < 2:

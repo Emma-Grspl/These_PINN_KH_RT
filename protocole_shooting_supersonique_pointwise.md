@@ -217,6 +217,14 @@ Les points suivants doivent etre conserves comme ancrages `gold` actuels, car il
 - `alpha = 0.183333`
 - `alpha = 0.191667`
 
+### `Mach = 1.4`
+
+- `alpha = 0.125000`
+- `alpha = 0.137500`
+- `alpha = 0.150000`
+- `alpha = 0.162500`
+- `alpha = 0.168750`
+
 ### `Mach = 1.5`
 
 - `alpha = 0.125000`
@@ -227,17 +235,60 @@ Les points suivants doivent etre conserves comme ancrages `gold` actuels, car il
 
 Ces points sont la base modale de comparaison du futur PINN supersonique.
 
+Note importante :
+
+- `Mach = 1.4` est maintenant promu en base modale robuste apres correction de la lecture des isolignes de Blumen en `c_i`;
+- l'ancienne estimation `blumen_ci` triait a tort certaines polylignes par `Mach`, ce qui sous-estimait artificiellement `c_i` autour de `M = 1.4`;
+- la comparaison correcte se fait sur la branche principale de l'isoline digitalisee.
+
 ## Points candidats a confirmer avant promotion en gold
 
 Ces points ont montre un signal utile, mais ils ne doivent pas encore etre promus automatiquement.
 
 ### `Mach = 1.4`
 
-Segment a reconfirmer par branche guidee :
+Zone suivante a auditer apres validation locale :
 
+- `alpha = 0.175000`
+- `alpha = 0.181250`
+- `alpha = 0.187500`
+- `alpha = 0.193750`
+- `alpha = 0.200000`
+
+### `Mach = 1.6`
+
+Premiere cible pointwise a ouvrir :
+
+- `alpha = 0.100000`
 - `alpha = 0.125000`
-- `alpha = 0.137500`
 - `alpha = 0.150000`
+- `alpha = 0.175000`
+- `alpha = 0.200000`
+
+### Campagne suivante recommandee
+
+Ordre pratique :
+
+1. bande coeur :
+   - `alpha in [0.10, 0.20]`
+   - `Mach in [1.0, 1.8]`
+2. bande elargie :
+   - `alpha in [0.05, 0.25]`
+   - `Mach in [1.0, 1.8]`
+
+Scripts de soumission :
+
+```bash
+bash scripts/submit_supersonic_pointwise_core_band.sh
+bash scripts/submit_supersonic_pointwise_extended_band.sh
+```
+
+Reglage prudent utilise pour ces campagnes :
+
+- `MAX_Y_LIMIT = 800`
+- `Y_LIMIT_FACTOR = 8`
+- `MATCH_Y = 1.0`
+- batch pointwise par Mach pour garder des temps de run lisibles
 - `alpha = 0.162500`
 - `alpha = 0.168750`
 
