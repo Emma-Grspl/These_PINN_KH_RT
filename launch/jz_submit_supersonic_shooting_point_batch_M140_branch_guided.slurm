@@ -53,7 +53,7 @@ export OUTPUT_STEM="${OUTPUT_STEM:-supersonic_shooting_point_batch_M140_branch_g
 export DRY_RUN="${DRY_RUN:-0}"
 export INCLUDE_GENERIC_SEEDS="${INCLUDE_GENERIC_SEEDS:-0}"
 
-echo "Audit pointwise shooting supersonique M=1.4 guide par branche sur ${SLURMD_NODENAME}"
+echo "Audit pointwise shooting supersonique guide par branche sur ${SLURMD_NODENAME}"
 echo "mach=${MACH}"
 echo "alphas=${ALPHAS}"
 echo "workers=${WORKERS}"

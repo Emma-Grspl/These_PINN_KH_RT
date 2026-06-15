@@ -5,10 +5,11 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
-# Campaigns are submitted one Mach front at a time. Keep the default conservative:
-# first bridge M=1.6 -> 1.7 before attempting M=1.8.
+# This launcher only works when the target Mach is bracketed by two existing
+# reference Mach lines in the central supersonic reference package.
 MACH_VALUES=(${MACH_VALUES:-1.65 1.70 1.75})
 ALPHA_VALUES=(${ALPHA_VALUES:-0.100000 0.125000 0.150000})
+REFERENCE_CSV="${REFERENCE_CSV:-assets/classic_supersonic/shooting/supersonic_reference_core_local_spectral.csv}"
 
 WORKERS="${WORKERS:-16}"
 ALPHA_TOLERANCE="${ALPHA_TOLERANCE:-5e-4}"
@@ -35,7 +36,42 @@ echo "Mach values: ${MACH_VALUES[*]}"
 echo "Alpha values: ${ALPHA_VALUES[*]}"
 echo "workers=${WORKERS}"
 
+if [[ ! -f "${REFERENCE_CSV}" ]]; then
+  echo "Reference CSV introuvable: ${REFERENCE_CSV}" >&2
+  exit 1
+fi
+
+min_ref_mach="$(python3 - "${REFERENCE_CSV}" <<'PY'
+import pandas as pd, sys
+df = pd.read_csv(sys.argv[1])
+vals = sorted(float(v) for v in df["Mach"].unique())
+print(vals[0])
+PY
+)"
+max_ref_mach="$(python3 - "${REFERENCE_CSV}" <<'PY'
+import pandas as pd, sys
+df = pd.read_csv(sys.argv[1])
+vals = sorted(float(v) for v in df["Mach"].unique())
+print(vals[-1])
+PY
+)"
+
+echo "Reference Mach bracket available: (${min_ref_mach}, ${max_ref_mach})"
+
 for mach in "${MACH_VALUES[@]}"; do
+  if ! python3 - "${mach}" "${min_ref_mach}" "${max_ref_mach}" <<'PY'
+import sys
+target = float(sys.argv[1])
+min_ref = float(sys.argv[2])
+max_ref = float(sys.argv[3])
+sys.exit(0 if (min_ref < target < max_ref) else 1)
+PY
+  then
+    echo "Skipping M=${mach}: branch-guided requires two bracketing reference Mach lines, but current reference only covers (${min_ref_mach}, ${max_ref_mach})." >&2
+    echo "Use the non-guided pointwise launcher instead: POINTS=\"0.100000:${mach} 0.125000:${mach} 0.150000:${mach}\" sbatch launch/jz_submit_supersonic_shooting_point_batch.slurm" >&2
+    continue
+  fi
+
   alphas_csv="$(IFS=,; echo "${ALPHA_VALUES[*]}")"
   mach_tag="$(printf '%0.2f' "${mach}" | tr -d '.')"
   output_stem="supersonic_shooting_branch_guided_front_M${mach_tag}"
