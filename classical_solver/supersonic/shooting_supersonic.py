@@ -62,7 +62,8 @@ class SupersonicShootingSolver:
 
     @staticmethod
     def base_velocity_derivative(y: float | np.ndarray) -> float | np.ndarray:
-        return 1.0 / np.cosh(y) ** 2
+        exp_term = np.exp(-2.0 * np.abs(y))
+        return 4.0 * exp_term / (1.0 + exp_term) ** 2
 
     def phase_speed(self, cr: float, ci: float) -> complex:
         return float(max(cr, 0.0)) + 1j * float(max(ci, self.ci_floor))

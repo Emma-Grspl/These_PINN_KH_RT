@@ -97,7 +97,8 @@ class Mstab17SupersonicSolver:
 
     @staticmethod
     def base_velocity_derivative(y: np.ndarray | float) -> np.ndarray | float:
-        return 1.0 / np.cosh(y) ** 2
+        exp_term = np.exp(-2.0 * np.abs(y))
+        return 4.0 * exp_term / (1.0 + exp_term) ** 2
 
     def phase_speed(self, cr: float, ci: float) -> complex:
         return max(float(cr), 0.0) + 1j * max(float(ci), self.ci_floor)
