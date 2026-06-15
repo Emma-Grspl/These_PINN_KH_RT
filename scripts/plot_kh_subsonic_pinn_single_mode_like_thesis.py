@@ -67,7 +67,7 @@ def reconstruct_subsonic_fields(
         p_y = p_xi / y_xi
 
     ci = float(model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).item())
-    c = -1j * ci
+    c = 1j * ci
     u_bar = base_velocity(y)
     du_bar = base_velocity_derivative(y)
     i_alpha = 1j * float(alpha)

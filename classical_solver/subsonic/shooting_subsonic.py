@@ -90,7 +90,8 @@ class SubsonicShootingSolver:
     @staticmethod
     def base_velocity_derivative(y: float | np.ndarray) -> float | np.ndarray:
         """Dérivée du profil de base U'(y)."""
-        return 1.0 / np.cosh(y) ** 2
+        exp_term = np.exp(-2.0 * np.abs(y))
+        return 4.0 * exp_term / (1.0 + exp_term) ** 2
 
     def phase_speed(self, ci: float) -> complex:
         """Construit la vitesse de phase complexe c = i c_i propre au subsonique."""

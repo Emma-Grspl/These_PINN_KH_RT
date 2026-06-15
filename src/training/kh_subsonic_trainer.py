@@ -463,7 +463,7 @@ def load_shooting_classic_full_mode(alpha: float, mach: float) -> dict[str, np.n
     gamma = np.concatenate([gamma_left[mask_left], gamma_right[::-1]])
 
     p_y = gamma * p
-    c = -1j * float(result.ci)
+    c = 1j * float(result.ci)
     u_bar = np.tanh(y)
     du_bar = 1.0 / np.cosh(y) ** 2
     i_alpha = 1j * float(alpha)
@@ -514,7 +514,7 @@ def reconstruct_predicted_full_mode(
         p_y = p_xi / y_xi
 
     ci = model.get_ci(alpha)
-    c = torch.complex(torch.zeros_like(ci), -ci)
+    c = torch.complex(torch.zeros_like(ci), ci)
     u_bar = base_velocity(y_pred_t)
     du_bar = base_velocity_derivative(y_pred_t)
     i_alpha = torch.complex(torch.zeros_like(alpha), alpha)

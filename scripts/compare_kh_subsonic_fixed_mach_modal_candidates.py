@@ -162,7 +162,7 @@ def load_classic_full_mode(alpha: float, mach: float) -> tuple[dict[str, np.ndar
     gamma = np.concatenate([gamma_left[mask_left], gamma_right[::-1]])
 
     p_y = gamma * p
-    c = -1j * float(result.ci)
+    c = 1j * float(result.ci)
     u_bar = np.tanh(y)
     du_bar = 1.0 / np.cosh(y) ** 2
     i_alpha = 1j * float(alpha)
@@ -194,7 +194,7 @@ def load_pinn_full_mode(candidate: Candidate, *, alpha: float, n_y: int, device:
     p = torch.complex(pr, pi)
 
     ci = float(candidate.model.get_ci(torch.tensor([[alpha]], dtype=torch.float32, device=device)).item())
-    c = -1j * ci
+    c = 1j * ci
     y = y_t[:, 0]
     u_bar = base_velocity(y)
     du_bar = base_velocity_derivative(y)

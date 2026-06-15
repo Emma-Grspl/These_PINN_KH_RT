@@ -13,6 +13,7 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --hidden-dim "${HIDDEN_DIM:-160}" \
   --mode-depth "${MODE_DEPTH:-4}" \
   --ci-depth "${CI_DEPTH:-2}" \
+  --initial-ci "${INITIAL_CI:-0.2}" \
   --activation tanh \
   --mapping-scale "${MAPPING_SCALE:-3.0}" \
   --n-interior "${N_INTERIOR:-512}" \
@@ -38,6 +39,9 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --w-bc-kappa "${W_BC_KAPPA:-10.0}" \
   --w-bc-q "${W_BC_Q:-20.0}" \
   --w-ci-supervision 0.0 \
+  --w-ci-neutrality "${W_CI_NEUTRALITY:-0.0}" \
+  --w-ci-low-alpha-zero "${W_CI_LOW_ALPHA_ZERO:-0.0}" \
+  --w-ci-smoothness "${W_CI_SMOOTHNESS:-0.0}" \
   --w-riccati-anchor 0.0 \
   --w-q-supervision 0.0 \
   --w-riccati-center-kappa "${W_RICCATI_CENTER_KAPPA:-5.0}" \
@@ -45,13 +49,15 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --w-riccati-boundary-band-kappa "${W_RICCATI_BOUNDARY_BAND_KAPPA:-2.0}" \
   --w-riccati-boundary-band-q "${W_RICCATI_BOUNDARY_BAND_Q:-8.0}" \
   --w-riccati-shooting-match "${W_RICCATI_SHOOTING_MATCH:-20.0}" \
+  --w-riccati-shooting-path "${W_RICCATI_SHOOTING_PATH:-0.0}" \
   --w-riccati-ci-local-min "${W_RICCATI_CI_LOCAL_MIN:-10.0}" \
   --riccati-center-xi "${RICCATI_CENTER_XI:-0.0}" \
   --riccati-boundary-band-points "${RICCATI_BOUNDARY_BAND_POINTS:-32}" \
   --riccati-boundary-band-start "${RICCATI_BOUNDARY_BAND_START:-0.94}" \
   --riccati-boundary-band-end "${RICCATI_BOUNDARY_BAND_END:-0.995}" \
   --riccati-shooting-steps "${RICCATI_SHOOTING_STEPS:-512}" \
-  --riccati-shooting-xi-boundary "${RICCATI_SHOOTING_XI_BOUNDARY:-0.995}" \
+  --riccati-shooting-xi-boundary "${RICCATI_SHOOTING_XI_BOUNDARY:-0.985}" \
+  --riccati-shooting-path-points "${RICCATI_SHOOTING_PATH_POINTS:-33}" \
   --riccati-ci-local-min-delta-abs "${RICCATI_CI_LOCAL_MIN_DELTA_ABS:-0.005}" \
   --riccati-ci-local-min-delta-rel "${RICCATI_CI_LOCAL_MIN_DELTA_REL:-0.05}" \
   --riccati-ci-local-min-margin "${RICCATI_CI_LOCAL_MIN_MARGIN:-0.0}" \

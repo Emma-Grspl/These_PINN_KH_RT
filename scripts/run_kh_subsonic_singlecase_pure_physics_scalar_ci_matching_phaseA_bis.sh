@@ -19,20 +19,25 @@ W_RICCATI_SHOOTING_MATCH="${W_RICCATI_SHOOTING_MATCH:-50.0}"
 W_RICCATI_SHOOTING_PATH="${W_RICCATI_SHOOTING_PATH:-0.0}"
 W_RICCATI_CI_LOCAL_MIN="${W_RICCATI_CI_LOCAL_MIN:-20.0}"
 RICCATI_SHOOTING_PATH_POINTS="${RICCATI_SHOOTING_PATH_POINTS:-33}"
+RICCATI_SHOOTING_XI_BOUNDARY="${RICCATI_SHOOTING_XI_BOUNDARY:-0.995}"
 RICCATI_CI_LOCAL_MIN_DELTA_ABS="${RICCATI_CI_LOCAL_MIN_DELTA_ABS:-0.002}"
 RICCATI_CI_LOCAL_MIN_DELTA_REL="${RICCATI_CI_LOCAL_MIN_DELTA_REL:-0.02}"
 RICCATI_CI_LOCAL_MIN_MARGIN="${RICCATI_CI_LOCAL_MIN_MARGIN:-1e-4}"
+INITIAL_CI="${INITIAL_CI:-0.2}"
+EPOCHS="${EPOCHS:-5000}"
+LEARNING_RATE="${LEARNING_RATE:-1e-3}"
 
 python3 scripts/train_kh_subsonic_pinn.py \
   --mach "${MACH_VALUE}" \
   --alpha-min "${ALPHA_VALUE}" \
   --alpha-max "${ALPHA_VALUE}" \
-  --epochs 5000 \
-  --learning-rate 1e-3 \
+  --epochs "${EPOCHS}" \
+  --learning-rate "${LEARNING_RATE}" \
   --hidden-dim 160 \
   --mode-depth 4 \
   --ci-depth 2 \
   --fixed-scalar-ci \
+  --initial-ci "${INITIAL_CI}" \
   --activation tanh \
   --mapping-scale 3.0 \
   --n-interior 512 \
@@ -72,7 +77,7 @@ python3 scripts/train_kh_subsonic_pinn.py \
   --riccati-boundary-band-start 0.94 \
   --riccati-boundary-band-end 0.995 \
   --riccati-shooting-steps 512 \
-  --riccati-shooting-xi-boundary 0.995 \
+  --riccati-shooting-xi-boundary "${RICCATI_SHOOTING_XI_BOUNDARY}" \
   --riccati-shooting-path-points "${RICCATI_SHOOTING_PATH_POINTS}" \
   --riccati-ci-local-min-delta-abs "${RICCATI_CI_LOCAL_MIN_DELTA_ABS}" \
   --riccati-ci-local-min-delta-rel "${RICCATI_CI_LOCAL_MIN_DELTA_REL}" \

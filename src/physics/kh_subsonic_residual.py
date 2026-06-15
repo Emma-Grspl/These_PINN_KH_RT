@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import torch
 
+RICCATI_STATE_CLAMP = 1.0e3
+RICCATI_RHS_CLAMP = 1.0e4
+
 
 def xi_to_y(xi: torch.Tensor, mapping_scale: torch.Tensor | float) -> torch.Tensor:
     return mapping_scale * xi / (1.0 - xi.pow(2) + 1e-8)
@@ -20,7 +23,23 @@ def base_velocity(y: torch.Tensor) -> torch.Tensor:
 
 
 def base_velocity_derivative(y: torch.Tensor) -> torch.Tensor:
-    return 1.0 / torch.cosh(y).pow(2)
+    # Stable sech^2(y). torch.cosh overflows in float32 for the far-field
+    # compactified points used by the shooting losses.
+    exp_term = torch.exp(-2.0 * torch.abs(y))
+    return 4.0 * exp_term / (1.0 + exp_term).pow(2)
+
+
+def _finite_complex(z: torch.Tensor, *, limit: float) -> torch.Tensor:
+    real = torch.nan_to_num(z.real, nan=0.0, posinf=float(limit), neginf=-float(limit))
+    imag = torch.nan_to_num(z.imag, nan=0.0, posinf=float(limit), neginf=-float(limit))
+    return torch.complex(real, imag)
+
+
+def _clamp_complex_abs(z: torch.Tensor, *, max_abs: float) -> torch.Tensor:
+    z = _finite_complex(z, limit=float(max_abs))
+    magnitude = torch.abs(z).clamp_min(1.0)
+    scale = torch.clamp(float(max_abs) / magnitude, max=1.0)
+    return z * scale
 
 
 def _differentiate(values: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -60,6 +79,8 @@ def riccati_gamma_rhs(
     mach: float,
     ci: torch.Tensor,
 ) -> torch.Tensor:
+    gamma = _clamp_complex_abs(gamma, max_abs=RICCATI_STATE_CLAMP)
+    ci = torch.clamp(ci, min=1e-5)
     one = torch.ones_like(ci)
     c = torch.complex(torch.zeros_like(ci), ci)
     u = torch.complex(base_velocity(y), torch.zeros_like(y))
@@ -70,7 +91,8 @@ def riccati_gamma_rhs(
     u_diff = u - c
     p_term = -2.0 * du / u_diff
     r_term = one - mach_t**2 * (u_diff**2)
-    return -(gamma**2) - p_term * gamma + (alpha_c**2) * r_term
+    rhs = -(gamma**2) - p_term * gamma + (alpha_c**2) * r_term
+    return _clamp_complex_abs(rhs, max_abs=RICCATI_RHS_CLAMP)
 
 
 def _reconstruct_riccati_pressure_core(
@@ -500,7 +522,8 @@ def _riccati_rk4_step(
     k2 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k1, alpha_val, mach, ci_val)
     k3 = riccati_gamma_rhs(y_val + 0.5 * h, gamma_val + 0.5 * h * k2, alpha_val, mach, ci_val)
     k4 = riccati_gamma_rhs(y_val + h, gamma_val + h * k3, alpha_val, mach, ci_val)
-    return gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    gamma_next = gamma_val + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4)
+    return _clamp_complex_abs(gamma_next, max_abs=RICCATI_STATE_CLAMP)
 
 
 def _riccati_segment_integrate(
@@ -590,9 +613,15 @@ def _riccati_shooting_path_loss_from_sample(
     gamma_left_target = torch.stack(left_path)
     gamma_right_target = torch.flip(torch.stack(right_desc_path), dims=[0])
 
+    gamma_left_target = _clamp_complex_abs(gamma_left_target, max_abs=RICCATI_STATE_CLAMP)
+    gamma_right_target = _clamp_complex_abs(gamma_right_target, max_abs=RICCATI_STATE_CLAMP)
+    gamma_left_pred = _clamp_complex_abs(gamma_left_pred, max_abs=RICCATI_STATE_CLAMP)
+    gamma_right_pred = _clamp_complex_abs(gamma_right_pred, max_abs=RICCATI_STATE_CLAMP)
+
     left_loss = (gamma_left_pred.real - gamma_left_target.real).pow(2) + (gamma_left_pred.imag - gamma_left_target.imag).pow(2)
     right_loss = (gamma_right_pred.real - gamma_right_target.real).pow(2) + (gamma_right_pred.imag - gamma_right_target.imag).pow(2)
-    return 0.5 * (left_loss.mean() + right_loss.mean())
+    loss = 0.5 * (left_loss.mean() + right_loss.mean())
+    return torch.nan_to_num(loss, nan=RICCATI_STATE_CLAMP**2, posinf=RICCATI_STATE_CLAMP**2, neginf=RICCATI_STATE_CLAMP**2)
 
 
 def _riccati_shooting_match_loss_from_samples(
@@ -639,7 +668,7 @@ def _riccati_shooting_match_loss_from_samples(
             y_curr = y_curr + h_right
 
         mismatch = torch.abs(gamma_left - gamma_right) ** 2
-        losses.append(mismatch.real)
+        losses.append(torch.nan_to_num(mismatch.real, nan=RICCATI_STATE_CLAMP**2, posinf=RICCATI_STATE_CLAMP**2, neginf=RICCATI_STATE_CLAMP**2))
 
     if not losses:
         return torch.zeros(alpha_samples.shape[0], device=alpha_samples.device, dtype=alpha_samples.dtype)
