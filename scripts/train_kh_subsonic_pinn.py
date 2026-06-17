@@ -38,6 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--n-interior", type=int, default=512)
     parser.add_argument("--n-boundary", type=int, default=64)
     parser.add_argument("--n-alpha-supervision", type=int, default=128)
+    parser.add_argument("--ci-supervision-fixed-alphas", type=float, nargs="*", default=None)
     parser.add_argument("--n-anchor-alpha", type=int, default=32)
     parser.add_argument("--n-norm-interior", type=int, default=256)
     parser.add_argument("--n-reference-alpha", type=int, default=81)
@@ -130,6 +131,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--riccati-shooting-steps", type=int, default=256)
     parser.add_argument("--riccati-shooting-xi-boundary", type=float, default=0.995)
     parser.add_argument("--riccati-shooting-path-points", type=int, default=33)
+    parser.add_argument("--riccati-shooting-path-xi-boundary", type=float, default=0.94)
+    parser.add_argument("--riccati-shooting-path-start-epoch", type=int, default=0)
+    parser.add_argument("--riccati-shooting-path-every", type=int, default=1)
     parser.add_argument("--riccati-ci-local-min-delta-abs", type=float, default=0.005)
     parser.add_argument("--riccati-ci-local-min-delta-rel", type=float, default=0.05)
     parser.add_argument("--riccati-ci-local-min-margin", type=float, default=0.0)
@@ -165,6 +169,7 @@ def main() -> None:
         n_interior=args.n_interior,
         n_boundary=args.n_boundary,
         n_alpha_supervision=args.n_alpha_supervision,
+        ci_supervision_fixed_alphas=tuple(args.ci_supervision_fixed_alphas or []),
         n_anchor_alpha=args.n_anchor_alpha,
         n_norm_interior=args.n_norm_interior,
         n_reference_alpha=args.n_reference_alpha,
@@ -252,6 +257,9 @@ def main() -> None:
         riccati_shooting_steps=args.riccati_shooting_steps,
         riccati_shooting_xi_boundary=args.riccati_shooting_xi_boundary,
         riccati_shooting_path_points=args.riccati_shooting_path_points,
+        riccati_shooting_path_xi_boundary=args.riccati_shooting_path_xi_boundary,
+        riccati_shooting_path_start_epoch=args.riccati_shooting_path_start_epoch,
+        riccati_shooting_path_every=args.riccati_shooting_path_every,
         riccati_ci_local_min_delta_abs=args.riccati_ci_local_min_delta_abs,
         riccati_ci_local_min_delta_rel=args.riccati_ci_local_min_delta_rel,
         riccati_ci_local_min_margin=args.riccati_ci_local_min_margin,

@@ -69,6 +69,7 @@ class KHSubsonicTrainingConfig:
     n_interior: int = 512
     n_boundary: int = 64
     n_alpha_supervision: int = 128
+    ci_supervision_fixed_alphas: tuple[float, ...] = ()
     n_anchor_alpha: int = 32
     n_norm_interior: int = 256
     n_reference_alpha: int = 81
@@ -204,6 +205,9 @@ class KHSubsonicTrainingConfig:
     riccati_shooting_steps: int = 256
     riccati_shooting_xi_boundary: float = 0.995
     riccati_shooting_path_points: int = 33
+    riccati_shooting_path_xi_boundary: float = 0.94
+    riccati_shooting_path_start_epoch: int = 0
+    riccati_shooting_path_every: int = 1
     riccati_ci_local_min_delta_abs: float = 0.005
     riccati_ci_local_min_delta_rel: float = 0.05
     riccati_ci_local_min_margin: float = 0.0
@@ -247,6 +251,27 @@ def audit_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
     if alpha_max < alpha_min:
         raise ValueError(f"Invalid audit alpha bounds: [{alpha_min}, {alpha_max}]")
     return alpha_min, alpha_max
+
+
+def build_fixed_ci_supervision_alphas(
+    cfg: KHSubsonicTrainingConfig,
+    *,
+    device: torch.device,
+    dtype: torch.dtype,
+) -> torch.Tensor | None:
+    if not len(cfg.ci_supervision_fixed_alphas):
+        return None
+
+    values = np.asarray(cfg.ci_supervision_fixed_alphas, dtype=float)
+    values = np.unique(values)
+    alpha_min = float(cfg.alpha_min)
+    alpha_max = float(cfg.alpha_max)
+    if np.any(values < alpha_min) or np.any(values > alpha_max):
+        raise ValueError(
+            "All fixed ci supervision alphas must lie within "
+            f"[{alpha_min}, {alpha_max}], got {values.tolist()}."
+        )
+    return torch.tensor(values, dtype=dtype, device=device).view(-1, 1)
 
 
 def safe_torch_save(state_dict: dict, path: Path) -> None:
@@ -1459,22 +1484,28 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         )
 
         ci_supervision_neutral_fraction = min(1.0, stage_neutral_fraction + max(cfg.ci_supervision_neutral_boost, 0.0))
-        alpha_supervision = sample_alpha_adaptive_batch(
-            cfg.n_alpha_supervision,
-            alpha_min=train_alpha_min,
-            alpha_max=train_alpha_max,
-            focus_alphas=focus_alphas,
-            focus_fraction=cfg.focus_fraction,
-            focus_half_width=cfg.focus_half_width,
-            low_alpha_fraction=cfg.low_alpha_sample_fraction,
-            low_alpha_threshold=cfg.low_alpha_sample_threshold,
-            high_alpha_fraction=cfg.high_alpha_sample_fraction,
-            high_alpha_threshold=cfg.high_alpha_sample_threshold,
-            neutral_fraction=ci_supervision_neutral_fraction,
-            neutral_alpha=neutral_alpha,
-            neutral_half_width=cfg.neutral_half_width,
+        alpha_supervision = build_fixed_ci_supervision_alphas(
+            cfg,
             device=device,
+            dtype=xi_interior.dtype,
         )
+        if alpha_supervision is None:
+            alpha_supervision = sample_alpha_adaptive_batch(
+                cfg.n_alpha_supervision,
+                alpha_min=train_alpha_min,
+                alpha_max=train_alpha_max,
+                focus_alphas=focus_alphas,
+                focus_fraction=cfg.focus_fraction,
+                focus_half_width=cfg.focus_half_width,
+                low_alpha_fraction=cfg.low_alpha_sample_fraction,
+                low_alpha_threshold=cfg.low_alpha_sample_threshold,
+                high_alpha_fraction=cfg.high_alpha_sample_fraction,
+                high_alpha_threshold=cfg.high_alpha_sample_threshold,
+                neutral_fraction=ci_supervision_neutral_fraction,
+                neutral_alpha=neutral_alpha,
+                neutral_half_width=cfg.neutral_half_width,
+                device=device,
+            )
         if ci_supervision_cache is not None:
             ci_target = ci_supervision_cache.interpolate(alpha_supervision)
             ci_pred = model.get_ci(alpha_supervision)
@@ -1632,13 +1663,18 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         n_steps=cfg.riccati_shooting_steps,
                         xi_boundary=cfg.riccati_shooting_xi_boundary,
                     )
-                if cfg.w_riccati_shooting_path > 0.0:
+                if (
+                    cfg.w_riccati_shooting_path > 0.0
+                    and epoch >= cfg.riccati_shooting_path_start_epoch
+                    and cfg.riccati_shooting_path_every > 0
+                    and epoch % cfg.riccati_shooting_path_every == 0
+                ):
                     loss_riccati_shooting_path = riccati_shooting_path_loss(
                         model,
                         alpha_ref,
                         cfg.mach,
                         n_steps=cfg.riccati_shooting_steps,
-                        xi_boundary=cfg.riccati_shooting_xi_boundary,
+                        xi_boundary=cfg.riccati_shooting_path_xi_boundary,
                         n_points=cfg.riccati_shooting_path_points,
                     )
                 if (
@@ -1826,13 +1862,18 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         n_steps=cfg.riccati_shooting_steps,
                         xi_boundary=cfg.riccati_shooting_xi_boundary,
                     )
-                if cfg.w_riccati_shooting_path > 0.0:
+                if (
+                    cfg.w_riccati_shooting_path > 0.0
+                    and epoch >= cfg.riccati_shooting_path_start_epoch
+                    and cfg.riccati_shooting_path_every > 0
+                    and epoch % cfg.riccati_shooting_path_every == 0
+                ):
                     loss_riccati_shooting_path = riccati_shooting_path_loss(
                         model,
                         alpha_ref,
                         cfg.mach,
                         n_steps=cfg.riccati_shooting_steps,
-                        xi_boundary=cfg.riccati_shooting_xi_boundary,
+                        xi_boundary=cfg.riccati_shooting_path_xi_boundary,
                         n_points=cfg.riccati_shooting_path_points,
                     )
                 if (
