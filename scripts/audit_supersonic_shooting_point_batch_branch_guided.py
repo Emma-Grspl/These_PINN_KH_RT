@@ -26,12 +26,14 @@ from scripts.audit_supersonic_shooting_ci_map import ci_primary_score  # noqa: E
 from scripts.audit_supersonic_shooting_point_batch import (  # noqa: E402
     DEFAULT_OUTPUT_DIR,
     boundary_amplitude_metrics,
+    default_box_robustness_metrics,
     dedup_seeds,
     generic_seed_list,
     infer_regimes,
     plot_diagnostics,
     plot_modes_pdf,
     plot_status_map,
+    run_box_robustness_audit,
     success_label,
 )
 from scripts.audit_supersonic_shooting_visual_validation import reconstruct_shooting_fields  # noqa: E402
@@ -84,6 +86,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--visible-threshold-ratio", type=float, default=0.02)
     parser.add_argument("--visible-min-half-width", type=float, default=8.0)
     parser.add_argument("--edge-amp-threshold", type=float, default=0.05)
+    parser.add_argument("--box-robustness-factors", type=float, nargs="+", default=[1.5, 2.0])
+    parser.add_argument("--box-robustness-max-rel-l2", type=float, default=0.15)
+    parser.add_argument("--box-robustness-max-peak-shift", type=float, default=0.75)
+    parser.add_argument("--box-robustness-max-center8-delta", type=float, default=0.10)
+    parser.add_argument("--box-robustness-max-edge-growth", type=float, default=1.25)
     parser.add_argument("--output-stem", type=str, default="supersonic_shooting_point_batch_M140_branch_guided")
     parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
     parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
@@ -511,6 +518,17 @@ def evaluate_point(
         )
         diag["box_truncation_suspect_p"] = bool(float(p_boundary["p_edge_amp_fraction_max"]) > float(cfg["edge_amp_threshold"]))
         diag["box_truncation_suspect_any_field"] = bool(float(diag["max_field_edge_amp_fraction"]) > float(cfg["edge_amp_threshold"]))
+        diag.update(
+            run_box_robustness_audit(
+                alpha=float(alpha),
+                mach=float(mach),
+                cr=float(best["shooting_cr"]),
+                ci=float(best["shooting_ci"]),
+                ln_p_start_right=float(best["ln_p_start_right"]),
+                cfg=cfg,
+                base_fields=fields,
+            )
+        )
 
         summary_row = {
             "alpha": float(alpha),
@@ -669,6 +687,15 @@ def evaluate_point(
             "left_relative_regime": "",
             "right_relative_mach": np.nan,
             "right_relative_regime": "",
+            **default_box_robustness_metrics(
+                sorted(
+                    {
+                        float(factor)
+                        for factor in cfg.get("box_robustness_factors", [])
+                        if np.isfinite(float(factor)) and float(factor) > 1.0 + 1.0e-9
+                    }
+                )
+            ),
             "exception": repr(exc),
         }
         return summary_row, candidate_rows, []
@@ -737,6 +764,14 @@ def main() -> None:
         f"box: min={float(args.min_y_limit):.1f} max={float(args.max_y_limit):.1f} "
         f"factor={float(args.y_limit_factor):.2f} amp=[{float(args.amp_lower_bound):.1f},{float(args.amp_upper_bound):.1f}]"
     )
+    print(
+        "box robustness: "
+        f"factors={','.join(f'{float(value):.2f}' for value in args.box_robustness_factors)} "
+        f"relL2<={float(args.box_robustness_max_rel_l2):.3f} "
+        f"peak<={float(args.box_robustness_max_peak_shift):.3f} "
+        f"center8<={float(args.box_robustness_max_center8_delta):.3f} "
+        f"edge_growth<={float(args.box_robustness_max_edge_growth):.3f}"
+    )
     print(f"guide-targets={guide_path}")
     if args.dry_run:
         print("\nGuide targets:")
@@ -768,6 +803,11 @@ def main() -> None:
         "continuity_weight": float(args.continuity_weight),
         "include_generic_seeds": bool(args.include_generic_seeds),
         "edge_amp_threshold": float(args.edge_amp_threshold),
+        "box_robustness_factors": [float(value) for value in args.box_robustness_factors],
+        "box_robustness_max_rel_l2": float(args.box_robustness_max_rel_l2),
+        "box_robustness_max_peak_shift": float(args.box_robustness_max_peak_shift),
+        "box_robustness_max_center8_delta": float(args.box_robustness_max_center8_delta),
+        "box_robustness_max_edge_growth": float(args.box_robustness_max_edge_growth),
         "cr_points": str(args.cr_points),
         "ci_points": str(args.ci_points),
     }
@@ -792,6 +832,7 @@ def main() -> None:
                 f"guide_err_cr={float(summary_row['best_guide_err_cr_abs']) if np.isfinite(summary_row['best_guide_err_cr_abs']) else np.nan:.3e} "
                 f"guide_err_ci={float(summary_row['best_guide_err_ci_abs']) if np.isfinite(summary_row['best_guide_err_ci_abs']) else np.nan:.3e} "
                 f"box_any={bool(summary_row['box_truncation_suspect_any_field'])} "
+                f"box_robust={bool(summary_row.get('box_robustness_pass', False))} "
                 f"stage1={float(summary_row['best_stage1_mismatch']) if np.isfinite(summary_row['best_stage1_mismatch']) else np.nan:.3e} "
                 f"stage2={float(summary_row['best_stage2_mismatch']) if np.isfinite(summary_row['best_stage2_mismatch']) else np.nan:.3e}"
             )

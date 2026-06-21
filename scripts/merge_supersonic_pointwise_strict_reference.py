@@ -111,6 +111,8 @@ def classify_row(row: pd.Series, args: argparse.Namespace) -> tuple[str, str]:
     stage2 = finite_float(row.get("best_stage2_mismatch"))
     edge = finite_float(row.get("max_field_edge_amp_fraction", row.get("edge_amp_fraction_max")))
     box_any = truthy(row.get("box_truncation_suspect_any_field", False))
+    box_robust_enabled = truthy(row.get("box_robustness_enabled", False))
+    box_robust_pass = truthy(row.get("box_robustness_pass", False))
     ci_available = truthy(row.get("blumen_ci_available", False))
     ci_rel = finite_float(row.get("best_err_ci_rel"))
 
@@ -118,6 +120,8 @@ def classify_row(row: pd.Series, args: argparse.Namespace) -> tuple[str, str]:
         return "reject", "stage2_too_large"
     if box_any:
         return "reject", "box_truncation_suspect"
+    if box_robust_enabled and not box_robust_pass:
+        return "reject", "box_robustness_failed"
 
     ci_ok_gold = (not ci_available) or (np.isfinite(ci_rel) and ci_rel <= float(args.max_gold_ci_rel))
     ci_ok_silver = (not ci_available) or (np.isfinite(ci_rel) and ci_rel <= float(args.max_silver_ci_rel))

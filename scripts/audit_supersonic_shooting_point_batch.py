@@ -78,6 +78,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--visible-threshold-ratio", type=float, default=0.02)
     parser.add_argument("--visible-min-half-width", type=float, default=8.0)
     parser.add_argument("--edge-amp-threshold", type=float, default=0.05)
+    parser.add_argument(
+        "--box-robustness-factors",
+        type=float,
+        nargs="+",
+        default=[1.5, 2.0],
+        help="Facteurs multiplicatifs utilises pour agrandir la boite et tester la robustesse modale.",
+    )
+    parser.add_argument("--box-robustness-max-rel-l2", type=float, default=0.15)
+    parser.add_argument("--box-robustness-max-peak-shift", type=float, default=0.75)
+    parser.add_argument("--box-robustness-max-center8-delta", type=float, default=0.10)
+    parser.add_argument("--box-robustness-max-edge-growth", type=float, default=1.25)
     parser.add_argument("--output-stem", type=str, required=True)
     parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
     parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
@@ -216,6 +227,199 @@ def infer_regimes(*, mach: float, cr: float, ci: float) -> dict[str, object]:
         "right_relative_mach": float(right_rel_mach),
         "right_relative_regime": str(right_regime),
     }
+
+
+def trapezoid_compat(y: np.ndarray, x: np.ndarray) -> float:
+    if hasattr(np, "trapezoid"):
+        return float(np.trapezoid(y, x))
+    return float(np.trapz(y, x))
+
+
+def box_factor_label(factor: float) -> str:
+    return f"x{float(factor):.2f}".replace(".", "p")
+
+
+def interpolate_complex_field(y_source: np.ndarray, field_source: np.ndarray, y_target: np.ndarray) -> np.ndarray:
+    real_part = np.interp(y_target, y_source, np.real(field_source))
+    imag_part = np.interp(y_target, y_source, np.imag(field_source))
+    return real_part + 1j * imag_part
+
+
+def normalized_field_l2(field: np.ndarray, y: np.ndarray) -> np.ndarray:
+    norm = np.sqrt(max(trapezoid_compat(np.abs(field) ** 2, y), 1e-12))
+    return field / norm
+
+
+def compare_mode_shapes(
+    *,
+    base_fields: dict[str, np.ndarray],
+    variant_fields: dict[str, np.ndarray],
+) -> dict[str, float]:
+    y_base = np.asarray(base_fields["y"], dtype=float)
+    y_variant = np.asarray(variant_fields["y"], dtype=float)
+    overlap_min = max(float(np.min(y_base)), float(np.min(y_variant)))
+    overlap_max = min(float(np.max(y_base)), float(np.max(y_variant)))
+    if not np.isfinite(overlap_min) or not np.isfinite(overlap_max) or overlap_max <= overlap_min:
+        raise RuntimeError("Recouvrement vide entre le mode de base et le mode reconstruit sur grande boite.")
+
+    n_points = int(min(max(len(y_base), len(y_variant), 401), 2001))
+    y_common = np.linspace(overlap_min, overlap_max, n_points)
+    base_p = interpolate_complex_field(y_base, np.asarray(base_fields["p"], dtype=np.complex128), y_common)
+    variant_p = interpolate_complex_field(y_variant, np.asarray(variant_fields["p"], dtype=np.complex128), y_common)
+
+    inner = np.vdot(variant_p, base_p)
+    if np.abs(inner) > 0.0:
+        phase = np.exp(-1j * np.angle(inner))
+    else:
+        phase = 1.0 + 0.0j
+
+    rel_l2_by_field: dict[str, float] = {}
+    for name in ("p", "rho", "u", "v"):
+        base_interp = interpolate_complex_field(y_base, np.asarray(base_fields[name], dtype=np.complex128), y_common)
+        variant_interp = interpolate_complex_field(y_variant, np.asarray(variant_fields[name], dtype=np.complex128), y_common) * phase
+        base_norm = normalized_field_l2(base_interp, y_common)
+        variant_norm = normalized_field_l2(variant_interp, y_common)
+        rel_l2_by_field[name] = float(
+            np.sqrt(trapezoid_compat(np.abs(base_norm - variant_norm) ** 2, y_common) / max(trapezoid_compat(np.abs(base_norm) ** 2, y_common), 1e-12))
+        )
+
+    base_diag = extended_profile_diagnostics(y_common, base_p)
+    variant_diag = extended_profile_diagnostics(y_common, variant_p * phase)
+    base_peak = max(float(np.max(np.abs(base_p))), 1e-12)
+    variant_peak = max(float(np.max(np.abs(variant_p))), 1e-12)
+    base_edge = max(float(np.abs(base_p[0])), float(np.abs(base_p[-1]))) / base_peak
+    variant_edge = max(float(np.abs(variant_p[0])), float(np.abs(variant_p[-1]))) / variant_peak
+
+    return {
+        "p_rel_l2": float(rel_l2_by_field["p"]),
+        "rho_rel_l2": float(rel_l2_by_field["rho"]),
+        "u_rel_l2": float(rel_l2_by_field["u"]),
+        "v_rel_l2": float(rel_l2_by_field["v"]),
+        "max_rel_l2": float(max(rel_l2_by_field.values())),
+        "peak_shift_abs": abs(float(variant_diag["peak_y"]) - float(base_diag["peak_y"])),
+        "center8_mass_fraction_delta": abs(
+            float(variant_diag["center8_mass_fraction"]) - float(base_diag["center8_mass_fraction"])
+        ),
+        "edge_growth_ratio": float(variant_edge / max(base_edge, 1e-12)),
+        "base_half_span": float(max(abs(y_base[0]), abs(y_base[-1]))),
+        "variant_half_span": float(max(abs(y_variant[0]), abs(y_variant[-1]))),
+    }
+
+
+def default_box_robustness_metrics(factors: list[float]) -> dict[str, object]:
+    metrics: dict[str, object] = {
+        "box_robustness_enabled": bool(factors),
+        "box_robustness_pass": True,
+        "box_robustness_note": "not_run" if factors else "disabled",
+        "box_robustness_n_variants": int(len(factors)),
+        "box_robustness_max_rel_l2": np.nan,
+        "box_robustness_max_peak_shift": np.nan,
+        "box_robustness_max_center8_delta": np.nan,
+        "box_robustness_max_edge_growth": np.nan,
+        "box_robustness_min_half_span_gain": np.nan,
+    }
+    for factor in factors:
+        label = box_factor_label(float(factor))
+        metrics[f"box_robustness_p_rel_l2_{label}"] = np.nan
+        metrics[f"box_robustness_rho_rel_l2_{label}"] = np.nan
+        metrics[f"box_robustness_u_rel_l2_{label}"] = np.nan
+        metrics[f"box_robustness_v_rel_l2_{label}"] = np.nan
+        metrics[f"box_robustness_max_rel_l2_{label}"] = np.nan
+        metrics[f"box_robustness_peak_shift_{label}"] = np.nan
+        metrics[f"box_robustness_center8_delta_{label}"] = np.nan
+        metrics[f"box_robustness_edge_growth_{label}"] = np.nan
+        metrics[f"box_robustness_half_span_gain_{label}"] = np.nan
+    return metrics
+
+
+def run_box_robustness_audit(
+    *,
+    alpha: float,
+    mach: float,
+    cr: float,
+    ci: float,
+    ln_p_start_right: float,
+    cfg: dict[str, object],
+    base_fields: dict[str, np.ndarray],
+) -> dict[str, object]:
+    factors = sorted(
+        {
+            float(factor)
+            for factor in cfg["box_robustness_factors"]
+            if np.isfinite(float(factor)) and float(factor) > 1.0 + 1.0e-9
+        }
+    )
+    metrics = default_box_robustness_metrics(factors)
+    if not factors:
+        return metrics
+
+    failures: list[str] = []
+    max_rel_l2 = 0.0
+    max_peak_shift = 0.0
+    max_center8_delta = 0.0
+    max_edge_growth = 0.0
+    min_half_span_gain = np.inf
+    base_half_span = float(max(abs(base_fields["y"][0]), abs(base_fields["y"][-1])))
+
+    for factor in factors:
+        label = box_factor_label(float(factor))
+        try:
+            variant_fields = reconstruct_shooting_fields(
+                alpha=float(alpha),
+                mach=float(mach),
+                cr=float(cr),
+                ci=float(ci),
+                ln_p_start_right=float(ln_p_start_right),
+                match_y=float(cfg["match_y"]),
+                use_mapping=bool(cfg["use_mapping"]),
+                mapping_scale=float(cfg["mapping_scale"]),
+                min_y_limit=float(cfg["min_y_limit"]),
+                max_y_limit=float(cfg["max_y_limit"]) * float(factor),
+                y_limit_factor=float(cfg["y_limit_factor"]) * float(factor),
+            )
+            compare = compare_mode_shapes(base_fields=base_fields, variant_fields=variant_fields)
+        except Exception as exc:  # noqa: BLE001
+            metrics["box_robustness_pass"] = False
+            metrics["box_robustness_note"] = f"reconstruction_failed_{label}"
+            failures.append(f"{label}:{exc!r}")
+            continue
+
+        metrics[f"box_robustness_p_rel_l2_{label}"] = float(compare["p_rel_l2"])
+        metrics[f"box_robustness_rho_rel_l2_{label}"] = float(compare["rho_rel_l2"])
+        metrics[f"box_robustness_u_rel_l2_{label}"] = float(compare["u_rel_l2"])
+        metrics[f"box_robustness_v_rel_l2_{label}"] = float(compare["v_rel_l2"])
+        metrics[f"box_robustness_max_rel_l2_{label}"] = float(compare["max_rel_l2"])
+        metrics[f"box_robustness_peak_shift_{label}"] = float(compare["peak_shift_abs"])
+        metrics[f"box_robustness_center8_delta_{label}"] = float(compare["center8_mass_fraction_delta"])
+        metrics[f"box_robustness_edge_growth_{label}"] = float(compare["edge_growth_ratio"])
+        metrics[f"box_robustness_half_span_gain_{label}"] = float(compare["variant_half_span"] / max(base_half_span, 1e-12))
+
+        max_rel_l2 = max(max_rel_l2, float(compare["max_rel_l2"]))
+        max_peak_shift = max(max_peak_shift, float(compare["peak_shift_abs"]))
+        max_center8_delta = max(max_center8_delta, float(compare["center8_mass_fraction_delta"]))
+        max_edge_growth = max(max_edge_growth, float(compare["edge_growth_ratio"]))
+        min_half_span_gain = min(min_half_span_gain, float(compare["variant_half_span"] / max(base_half_span, 1e-12)))
+
+        if float(compare["max_rel_l2"]) > float(cfg["box_robustness_max_rel_l2"]):
+            failures.append(f"{label}:rel_l2")
+        if float(compare["peak_shift_abs"]) > float(cfg["box_robustness_max_peak_shift"]):
+            failures.append(f"{label}:peak_shift")
+        if float(compare["center8_mass_fraction_delta"]) > float(cfg["box_robustness_max_center8_delta"]):
+            failures.append(f"{label}:center8")
+        if float(compare["edge_growth_ratio"]) > float(cfg["box_robustness_max_edge_growth"]):
+            failures.append(f"{label}:edge_growth")
+
+    metrics["box_robustness_max_rel_l2"] = float(max_rel_l2) if factors else np.nan
+    metrics["box_robustness_max_peak_shift"] = float(max_peak_shift) if factors else np.nan
+    metrics["box_robustness_max_center8_delta"] = float(max_center8_delta) if factors else np.nan
+    metrics["box_robustness_max_edge_growth"] = float(max_edge_growth) if factors else np.nan
+    metrics["box_robustness_min_half_span_gain"] = float(min_half_span_gain) if np.isfinite(min_half_span_gain) else np.nan
+    if failures:
+        metrics["box_robustness_pass"] = False
+        metrics["box_robustness_note"] = ";".join(failures)
+    else:
+        metrics["box_robustness_note"] = "stable_across_box_growth"
+    return metrics
 
 
 def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
@@ -374,6 +578,17 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
         )
         diag["box_truncation_suspect_p"] = bool(float(p_boundary["p_edge_amp_fraction_max"]) > float(cfg["edge_amp_threshold"]))
         diag["box_truncation_suspect_any_field"] = bool(float(diag["max_field_edge_amp_fraction"]) > float(cfg["edge_amp_threshold"]))
+        diag.update(
+            run_box_robustness_audit(
+                alpha=float(alpha),
+                mach=float(mach),
+                cr=float(best["shooting_cr"]),
+                ci=float(best["shooting_ci"]),
+                ln_p_start_right=float(best["ln_p_start_right"]),
+                cfg=cfg,
+                base_fields=fields,
+            )
+        )
 
         summary_row = {
             "alpha": float(alpha),
@@ -499,6 +714,15 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "left_relative_regime": "",
             "right_relative_mach": np.nan,
             "right_relative_regime": "",
+            **default_box_robustness_metrics(
+                sorted(
+                    {
+                        float(factor)
+                        for factor in cfg.get("box_robustness_factors", [])
+                        if np.isfinite(float(factor)) and float(factor) > 1.0 + 1.0e-9
+                    }
+                )
+            ),
             "exception": repr(exc),
         }
         return summary_row, candidate_rows, []
@@ -645,6 +869,11 @@ def main() -> None:
         "continuity_weight": float(args.continuity_weight),
         "include_generic_seeds": bool(args.include_generic_seeds),
         "edge_amp_threshold": float(args.edge_amp_threshold),
+        "box_robustness_factors": [float(value) for value in args.box_robustness_factors],
+        "box_robustness_max_rel_l2": float(args.box_robustness_max_rel_l2),
+        "box_robustness_max_peak_shift": float(args.box_robustness_max_peak_shift),
+        "box_robustness_max_center8_delta": float(args.box_robustness_max_center8_delta),
+        "box_robustness_max_edge_growth": float(args.box_robustness_max_edge_growth),
         "cr_points": str(args.cr_points),
         "ci_points": str(args.ci_points),
     }
@@ -655,6 +884,14 @@ def main() -> None:
     print(
         f"box: min={float(args.min_y_limit):.1f} max={float(args.max_y_limit):.1f} "
         f"factor={float(args.y_limit_factor):.2f} amp=[{float(args.amp_lower_bound):.1f},{float(args.amp_upper_bound):.1f}]"
+    )
+    print(
+        "box robustness: "
+        f"factors={','.join(f'{float(value):.2f}' for value in args.box_robustness_factors)} "
+        f"relL2<={float(args.box_robustness_max_rel_l2):.3f} "
+        f"peak<={float(args.box_robustness_max_peak_shift):.3f} "
+        f"center8<={float(args.box_robustness_max_center8_delta):.3f} "
+        f"edge_growth<={float(args.box_robustness_max_edge_growth):.3f}"
     )
 
     summary_rows: list[dict[str, object]] = []
@@ -676,6 +913,7 @@ def main() -> None:
                 f"cr={float(summary_row['best_shooting_cr']) if np.isfinite(summary_row['best_shooting_cr']) else np.nan:.5f} "
                 f"err_ci={float(summary_row['best_err_ci_abs']) if np.isfinite(summary_row['best_err_ci_abs']) else np.nan:.3e} "
                 f"box_any={bool(summary_row['box_truncation_suspect_any_field'])} "
+                f"box_robust={bool(summary_row.get('box_robustness_pass', False))} "
                 f"stage1={float(summary_row['best_stage1_mismatch']) if np.isfinite(summary_row['best_stage1_mismatch']) else np.nan:.3e} "
                 f"stage2={float(summary_row['best_stage2_mismatch']) if np.isfinite(summary_row['best_stage2_mismatch']) else np.nan:.3e}"
             )
