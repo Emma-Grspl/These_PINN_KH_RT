@@ -53,6 +53,7 @@ class KHSubsonicTrainingConfig:
     audit_alpha_max: float | None = None
     epochs: int = 5000
     learning_rate: float = 1e-3
+    grad_clip_norm: float = 1.0
     hidden_dim: int = 128
     mode_hidden_dim: int | None = None
     ci_hidden_dim: int | None = None
@@ -204,10 +205,12 @@ class KHSubsonicTrainingConfig:
     w_riccati_ci_local_min: float = 0.0
     riccati_shooting_steps: int = 256
     riccati_shooting_xi_boundary: float = 0.995
+    riccati_shooting_match_start_epoch: int = 0
     riccati_shooting_path_points: int = 33
     riccati_shooting_path_xi_boundary: float = 0.94
     riccati_shooting_path_start_epoch: int = 0
     riccati_shooting_path_every: int = 1
+    riccati_ci_local_min_start_epoch: int = 0
     riccati_ci_local_min_delta_abs: float = 0.005
     riccati_ci_local_min_delta_rel: float = 0.05
     riccati_ci_local_min_margin: float = 0.0
@@ -234,6 +237,21 @@ class KingOfTheHill:
             self.best_state = {k: v.detach().clone() for k, v in model.state_dict().items()}
             return True
         return False
+
+
+def _grads_are_finite(parameters) -> bool:
+    for param in parameters:
+        grad = param.grad
+        if grad is not None and not torch.isfinite(grad).all():
+            return False
+    return True
+
+
+def _clip_gradients(parameters, max_norm: float) -> float:
+    grads = [param for param in parameters if param.grad is not None]
+    if not grads or max_norm <= 0.0:
+        return 0.0
+    return float(torch.nn.utils.clip_grad_norm_(grads, max_norm=max_norm))
 
 
 def sampling_alpha_bounds(cfg: KHSubsonicTrainingConfig) -> tuple[float, float]:
@@ -1584,7 +1602,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 ci_excursion = torch.relu(torch.abs(ci_spectral - ci_mu) - ci_width)
                 loss_ci_window = torch.mean(ci_excursion.pow(2))
 
-        if cfg.w_riccati_ci_local_min > 0.0:
+        if cfg.w_riccati_ci_local_min > 0.0 and epoch >= cfg.riccati_ci_local_min_start_epoch:
             loss_riccati_ci_local_min = riccati_ci_local_min_loss(
                 model,
                 alpha_ref,
@@ -1614,12 +1632,22 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             or cfg.w_riccati_ci_local_min > 0.0
         )
 
+        ci_grad_norm = 0.0
+        mode_grad_norm = 0.0
         if cfg.separate_branch_optimizers:
             if ci_optimizer is not None and has_ci_branch_objective:
                 ci_optimizer.zero_grad()
                 loss_ci_branch = stage_w_ci_supervision * loss_ci + loss_ci_regularization
-                loss_ci_branch.backward()
-                ci_optimizer.step()
+                if loss_ci_branch.requires_grad and torch.isfinite(loss_ci_branch):
+                    loss_ci_branch.backward()
+                    ci_grad_norm = _clip_gradients(ci_optimizer.param_groups[0]["params"], cfg.grad_clip_norm)
+                    if _grads_are_finite(ci_optimizer.param_groups[0]["params"]):
+                        ci_optimizer.step()
+                    else:
+                        ci_optimizer.zero_grad(set_to_none=True)
+                else:
+                    ci_optimizer.zero_grad(set_to_none=True)
+                    ci_grad_norm = 0.0 if not loss_ci_branch.requires_grad else float("nan")
             else:
                 loss_ci_branch = stage_w_ci_supervision * loss_ci.detach() + loss_ci_regularization.detach()
 
@@ -1655,7 +1683,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         xi_end=cfg.riccati_boundary_band_end,
                         ci_override=ci_for_boundary,
                     )
-                if cfg.w_riccati_shooting_match > 0.0:
+                if cfg.w_riccati_shooting_match > 0.0 and epoch >= cfg.riccati_shooting_match_start_epoch:
                     loss_riccati_shooting_match = riccati_shooting_match_loss(
                         model,
                         alpha_ref,
@@ -1827,8 +1855,16 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + cfg.w_classic_full_mode_supervision * loss_classic_full_mode_supervision
                 + cfg.w_classic_balanced_full_mode_supervision * loss_classic_balanced_full_mode_supervision
             )
-            loss_mode.backward()
-            mode_optimizer.step()
+            if torch.isfinite(loss_mode):
+                loss_mode.backward()
+                mode_grad_norm = _clip_gradients(mode_optimizer.param_groups[0]["params"], cfg.grad_clip_norm)
+                if _grads_are_finite(mode_optimizer.param_groups[0]["params"]):
+                    mode_optimizer.step()
+                else:
+                    mode_optimizer.zero_grad(set_to_none=True)
+            else:
+                mode_optimizer.zero_grad(set_to_none=True)
+                mode_grad_norm = float("nan")
             loss = loss_mode.detach() + loss_ci_branch.detach()
         else:
             res_r, res_i, _ = pressure_ode_residual(model, xi_interior, alpha_interior, cfg.mach)
@@ -1854,7 +1890,7 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                         xi_start=cfg.riccati_boundary_band_start,
                         xi_end=cfg.riccati_boundary_band_end,
                     )
-                if cfg.w_riccati_shooting_match > 0.0:
+                if cfg.w_riccati_shooting_match > 0.0 and epoch >= cfg.riccati_shooting_match_start_epoch:
                     loss_riccati_shooting_match = riccati_shooting_match_loss(
                         model,
                         alpha_ref,
@@ -2028,8 +2064,19 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
                 + stage_w_ci_supervision * loss_ci
             )
             optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
+            if torch.isfinite(loss):
+                loss.backward()
+                total_grad_norm = _clip_gradients(optimizer.param_groups[0]["params"], cfg.grad_clip_norm)
+                if _grads_are_finite(optimizer.param_groups[0]["params"]):
+                    optimizer.step()
+                else:
+                    optimizer.zero_grad(set_to_none=True)
+                ci_grad_norm = total_grad_norm
+                mode_grad_norm = total_grad_norm
+            else:
+                optimizer.zero_grad(set_to_none=True)
+                ci_grad_norm = float("nan")
+                mode_grad_norm = float("nan")
 
         record = {
             "epoch": epoch,
@@ -2065,6 +2112,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
             "loss_ci_smoothness": float(loss_ci_smoothness.item()),
             "loss_ci_window": float(loss_ci_window.item()),
             "loss_ci_supervision": float(loss_ci.item()),
+            "grad_norm_ci": float(ci_grad_norm),
+            "grad_norm_mode": float(mode_grad_norm),
             "stage_w_ci_supervision": float(stage_w_ci_supervision),
             "stage_neutral_fraction": float(stage_neutral_fraction),
             "ci_supervision_neutral_fraction": float(ci_supervision_neutral_fraction),

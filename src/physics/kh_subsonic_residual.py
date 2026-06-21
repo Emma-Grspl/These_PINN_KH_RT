@@ -409,7 +409,12 @@ def riccati_boundary_band_loss_components(
 
     pred_left = model(xi_left, alpha_left)
     pred_right = model(xi_right, alpha_right)
-    ci = model.get_ci(alpha_left) if ci_override is None else ci_override
+    if ci_override is None:
+        ci = model.get_ci(alpha_left)
+    elif ci_override.shape[0] == 1:
+        ci = ci_override.repeat(alpha_left.shape[0], 1)
+    else:
+        ci = ci_override[: alpha_left.shape[0]]
     gamma_left, gamma_right = asymptotic_riccati_gammas(alpha_left, float(getattr(model, "mach", 0.5)), ci)
 
     loss_kappa = (
@@ -486,8 +491,8 @@ def riccati_shooting_path_loss(
         return torch.zeros(1, device=alpha.device, dtype=alpha.dtype).mean()
 
     alpha_samples = alpha[:, 0]
-    ci_samples = model.get_ci(alpha)[:, 0]
-    mapping_scale = model.get_mapping_scale()
+    ci_samples = model.get_ci(alpha).detach()[:, 0]
+    mapping_scale = model.get_mapping_scale().detach()
 
     losses: list[torch.Tensor] = []
     for alpha_val, ci_val in zip(alpha_samples, ci_samples):
@@ -572,46 +577,47 @@ def _riccati_shooting_path_loss_from_sample(
     gamma_left_pred = torch.complex(pred_left[:, 0], pred_left[:, 1])
     gamma_right_pred = torch.complex(pred_right[:, 0], pred_right[:, 1])
 
-    y_left = xi_to_y(xi_left, mapping_scale)[:, 0]
-    y_right = xi_to_y(xi_right, mapping_scale)[:, 0]
+    with torch.no_grad():
+        y_left = xi_to_y(xi_left, mapping_scale)[:, 0]
+        y_right = xi_to_y(xi_right, mapping_scale)[:, 0]
 
-    gamma_left_0, gamma_right_0 = asymptotic_riccati_gammas(alpha_scalar, mach, ci_scalar)
-    gamma_left_curr = gamma_left_0[0]
-    gamma_right_curr = gamma_right_0[0]
+        gamma_left_0, gamma_right_0 = asymptotic_riccati_gammas(alpha_scalar, mach, ci_scalar)
+        gamma_left_curr = gamma_left_0[0]
+        gamma_right_curr = gamma_right_0[0]
 
-    left_path = [gamma_left_curr]
-    right_desc_path = [gamma_right_curr]
+        left_path = [gamma_left_curr]
+        right_desc_path = [gamma_right_curr]
 
-    n_segments = max(int(n_points) - 1, 1)
-    n_substeps = max(int(n_steps) // n_segments, 1)
+        n_segments = max(int(n_points) - 1, 1)
+        n_substeps = max(int(n_steps) // n_segments, 1)
 
-    for idx in range(1, y_left.shape[0]):
-        gamma_left_curr = _riccati_segment_integrate(
-            y_left[idx - 1],
-            y_left[idx],
-            gamma_left_curr,
-            alpha_scalar[0],
-            mach,
-            ci_scalar[0],
-            n_substeps=n_substeps,
-        )
-        left_path.append(gamma_left_curr)
+        for idx in range(1, y_left.shape[0]):
+            gamma_left_curr = _riccati_segment_integrate(
+                y_left[idx - 1],
+                y_left[idx],
+                gamma_left_curr,
+                alpha_scalar[0],
+                mach,
+                ci_scalar[0],
+                n_substeps=n_substeps,
+            )
+            left_path.append(gamma_left_curr)
 
-    y_right_desc = torch.flip(y_right, dims=[0])
-    for idx in range(1, y_right_desc.shape[0]):
-        gamma_right_curr = _riccati_segment_integrate(
-            y_right_desc[idx - 1],
-            y_right_desc[idx],
-            gamma_right_curr,
-            alpha_scalar[0],
-            mach,
-            ci_scalar[0],
-            n_substeps=n_substeps,
-        )
-        right_desc_path.append(gamma_right_curr)
+        y_right_desc = torch.flip(y_right, dims=[0])
+        for idx in range(1, y_right_desc.shape[0]):
+            gamma_right_curr = _riccati_segment_integrate(
+                y_right_desc[idx - 1],
+                y_right_desc[idx],
+                gamma_right_curr,
+                alpha_scalar[0],
+                mach,
+                ci_scalar[0],
+                n_substeps=n_substeps,
+            )
+            right_desc_path.append(gamma_right_curr)
 
-    gamma_left_target = torch.stack(left_path)
-    gamma_right_target = torch.flip(torch.stack(right_desc_path), dims=[0])
+        gamma_left_target = torch.stack(left_path)
+        gamma_right_target = torch.flip(torch.stack(right_desc_path), dims=[0])
 
     gamma_left_target = _clamp_complex_abs(gamma_left_target, max_abs=RICCATI_STATE_CLAMP)
     gamma_right_target = _clamp_complex_abs(gamma_right_target, max_abs=RICCATI_STATE_CLAMP)
