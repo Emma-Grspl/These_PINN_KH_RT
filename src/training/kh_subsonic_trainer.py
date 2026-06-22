@@ -1336,6 +1336,8 @@ def train_fixed_mach_subsonic_pinn(cfg: KHSubsonicTrainingConfig) -> tuple[KHSub
         if not initial_model_path.exists():
             raise FileNotFoundError(f"Initial model path not found: {initial_model_path}")
         state_dict = torch.load(initial_model_path, map_location=device)
+        if isinstance(state_dict, dict) and "model_state_dict" in state_dict:
+            state_dict = state_dict["model_state_dict"]
         if cfg.initial_model_strict:
             load_fixed_mach_state_dict_compat(model, state_dict)
             print(f"Warm start loaded from {initial_model_path} (strict=True, compat=True)")

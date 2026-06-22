@@ -143,6 +143,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode-low-alpha-threshold", type=float, default=0.25)
     parser.add_argument("--mode-low-alpha-weight", type=float, default=1.0)
     parser.add_argument("--mode-low-alpha-audit-fraction", type=float, default=0.6)
+    parser.add_argument("--initial-model-path", type=str, default=None)
+    parser.add_argument("--no-initial-model-strict", action="store_true")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--output-dir", type=Path, default=Path("model_saved/kh_subsonic_fixed_mach"))
     return parser
@@ -272,6 +274,8 @@ def main() -> None:
         mode_low_alpha_threshold=args.mode_low_alpha_threshold,
         mode_low_alpha_weight=args.mode_low_alpha_weight,
         mode_low_alpha_audit_fraction=args.mode_low_alpha_audit_fraction,
+        initial_model_path=args.initial_model_path,
+        initial_model_strict=not args.no_initial_model_strict,
         output_dir=str(args.output_dir),
         device=args.device,
     )
