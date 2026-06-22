@@ -166,6 +166,23 @@ def success_label(spectral_success: bool, mode_success: bool) -> str:
     return "failed"
 
 
+def apply_box_rejection(status: str, diag: dict[str, object]) -> tuple[str, bool]:
+    """
+    Downgrade a mathematically matched candidate when the reconstructed mode is not
+    stable under the box-size audit. The raw spectral/mode flags stay available in
+    the CSV, but best_status/best_success must not advertise such points as valid.
+    """
+    if str(status) != "validated":
+        return str(status), False
+
+    truncation_suspect = bool(diag.get("box_truncation_suspect_any_field", False))
+    robustness_enabled = bool(diag.get("box_robustness_enabled", False))
+    robustness_failed = robustness_enabled and not bool(diag.get("box_robustness_pass", False))
+    if truncation_suspect or robustness_failed:
+        return "box_rejected", True
+    return str(status), False
+
+
 def selection_metric(
     *,
     target_available: bool,
@@ -589,6 +606,7 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                 base_fields=fields,
             )
         )
+        final_status, box_rejection_applied = apply_box_rejection(str(best["status"]), diag)
 
         summary_row = {
             "alpha": float(alpha),
@@ -615,8 +633,10 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "best_ln_p_start_right": float(best["ln_p_start_right"]),
             "best_spectral_success": bool(best["spectral_success"]),
             "best_mode_success": bool(best["mode_success"]),
-            "best_success": bool(best["success"]),
-            "best_status": str(best["status"]),
+            "best_success": bool(best["success"]) and not box_rejection_applied,
+            "best_raw_status": str(best["status"]),
+            "best_status": final_status,
+            "box_rejection_applied": bool(box_rejection_applied),
             "best_selection_metric": float(best["selection_metric"]),
             "best_selection_metric_name": str(best["selection_metric_name"]),
             "best_retry_index": int(best["retry_index"]),
@@ -635,7 +655,8 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                 {
                     "alpha": float(alpha),
                     "Mach": float(mach),
-                    "best_status": str(best["status"]),
+                    "best_status": final_status,
+                    "best_raw_status": str(best["status"]),
                     "y": float(y_value),
                     "rho_real": float(np.real(rho_value)),
                     "rho_imag": float(np.imag(rho_value)),
@@ -676,7 +697,9 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "best_spectral_success": False,
             "best_mode_success": False,
             "best_success": False,
+            "best_raw_status": "exception",
             "best_status": "exception",
+            "box_rejection_applied": False,
             "best_selection_metric": np.nan,
             "best_selection_metric_name": "",
             "best_retry_index": np.nan,
@@ -733,6 +756,7 @@ def plot_status_map(summary_df: pd.DataFrame, output_path: Path) -> None:
         "validated": "#15803D",
         "spectral_only": "#D97706",
         "mode_only": "#7C3AED",
+        "box_rejected": "#64748B",
         "failed": "#DC2626",
         "exception": "#111827",
     }
@@ -765,6 +789,7 @@ def plot_diagnostics(summary_df: pd.DataFrame, output_path: Path) -> None:
         "validated": "#15803D",
         "spectral_only": "#D97706",
         "mode_only": "#7C3AED",
+        "box_rejected": "#64748B",
         "failed": "#DC2626",
         "exception": "#111827",
     }

@@ -25,6 +25,7 @@ from scripts.audit_supersonic_families_against_blumen import (  # noqa: E402
 from scripts.audit_supersonic_shooting_ci_map import ci_primary_score  # noqa: E402
 from scripts.audit_supersonic_shooting_point_batch import (  # noqa: E402
     DEFAULT_OUTPUT_DIR,
+    apply_box_rejection,
     boundary_amplitude_metrics,
     default_box_robustness_metrics,
     dedup_seeds,
@@ -529,6 +530,7 @@ def evaluate_point(
                 base_fields=fields,
             )
         )
+        final_status, box_rejection_applied = apply_box_rejection(str(best["status"]), diag)
 
         summary_row = {
             "alpha": float(alpha),
@@ -572,8 +574,10 @@ def evaluate_point(
             "best_ln_p_start_right": float(best["ln_p_start_right"]),
             "best_spectral_success": bool(best["spectral_success"]),
             "best_mode_success": bool(best["mode_success"]),
-            "best_success": bool(best["success"]),
-            "best_status": str(best["status"]),
+            "best_success": bool(best["success"]) and not box_rejection_applied,
+            "best_raw_status": str(best["status"]),
+            "best_status": final_status,
+            "box_rejection_applied": bool(box_rejection_applied),
             "best_selection_metric": float(best["selection_metric"]),
             "best_selection_metric_name": str(best["selection_metric_name"]),
             "best_retry_index": int(best["retry_index"]),
@@ -592,7 +596,8 @@ def evaluate_point(
                 {
                     "alpha": float(alpha),
                     "Mach": float(mach),
-                    "best_status": str(best["status"]),
+                    "best_status": final_status,
+                    "best_raw_status": str(best["status"]),
                     "y": float(y_value),
                     "rho_real": float(np.real(rho_value)),
                     "rho_imag": float(np.imag(rho_value)),
@@ -649,7 +654,9 @@ def evaluate_point(
             "best_spectral_success": False,
             "best_mode_success": False,
             "best_success": False,
+            "best_raw_status": "exception",
             "best_status": "exception",
+            "box_rejection_applied": False,
             "best_selection_metric": np.nan,
             "best_selection_metric_name": "",
             "best_retry_index": np.nan,
