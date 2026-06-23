@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--box-robustness-max-peak-shift", type=float, default=0.75)
     parser.add_argument("--box-robustness-max-center8-delta", type=float, default=0.10)
     parser.add_argument("--box-robustness-max-edge-growth", type=float, default=1.25)
+    parser.add_argument(
+        "--box-selection-max-candidates",
+        type=int,
+        default=12,
+        help="Nombre maximum de candidats bruts validated a tester avec la boite. <=0 teste tous les candidats.",
+    )
     parser.add_argument("--output-stem", type=str, required=True)
     parser.add_argument("--cr-points", type=Path, default=DEFAULT_BLUMEN_CR_POINTS)
     parser.add_argument("--ci-points", type=Path, default=DEFAULT_BLUMEN_CI_POINTS)
@@ -439,6 +445,137 @@ def run_box_robustness_audit(
     return metrics
 
 
+def rank_candidate_rows(candidate_rows: list[dict[str, object]]) -> list[dict[str, object]]:
+    return sorted(
+        candidate_rows,
+        key=lambda row: (
+            0 if bool(row["success"]) else 1,
+            float(row["selection_metric"]),
+            float(row["stage1_mismatch"] + row["stage2_mismatch"]),
+        ),
+    )
+
+
+def reconstruct_candidate_fields_and_diagnostics(
+    *,
+    alpha: float,
+    mach: float,
+    candidate: dict[str, object],
+    cfg: dict[str, object],
+) -> tuple[dict[str, np.ndarray], dict[str, object]]:
+    fields = reconstruct_shooting_fields(
+        alpha=float(alpha),
+        mach=float(mach),
+        cr=float(candidate["shooting_cr"]),
+        ci=float(candidate["shooting_ci"]),
+        ln_p_start_right=float(candidate["ln_p_start_right"]),
+        match_y=float(cfg["match_y"]),
+        use_mapping=bool(cfg["use_mapping"]),
+        mapping_scale=float(cfg["mapping_scale"]),
+        min_y_limit=float(cfg["min_y_limit"]),
+        max_y_limit=float(cfg["max_y_limit"]),
+        y_limit_factor=float(cfg["y_limit_factor"]),
+    )
+    y_fields = np.asarray(fields["y"], dtype=float)
+    p_fields = np.asarray(fields["p"], dtype=np.complex128)
+    rho_fields = np.asarray(fields["rho"], dtype=np.complex128)
+    u_fields = np.asarray(fields["u"], dtype=np.complex128)
+    v_fields = np.asarray(fields["v"], dtype=np.complex128)
+    diag = extended_profile_diagnostics(y_fields, p_fields)
+    p_boundary = boundary_amplitude_metrics(p_fields, prefix="p")
+    rho_boundary = boundary_amplitude_metrics(rho_fields, prefix="rho")
+    u_boundary = boundary_amplitude_metrics(u_fields, prefix="u")
+    v_boundary = boundary_amplitude_metrics(v_fields, prefix="v")
+    diag.update(p_boundary)
+    diag.update(rho_boundary)
+    diag.update(u_boundary)
+    diag.update(v_boundary)
+    diag.update(infer_regimes(mach=float(mach), cr=float(candidate["shooting_cr"]), ci=float(candidate["shooting_ci"])))
+    diag["edge_amp_fraction_max"] = float(p_boundary["p_edge_amp_fraction_max"])
+    diag["left_boundary_amp_fraction"] = float(p_boundary["p_left_boundary_amp_fraction"])
+    diag["right_boundary_amp_fraction"] = float(p_boundary["p_right_boundary_amp_fraction"])
+    diag["max_field_edge_amp_fraction"] = float(
+        max(
+            p_boundary["p_edge_amp_fraction_max"],
+            rho_boundary["rho_edge_amp_fraction_max"],
+            u_boundary["u_edge_amp_fraction_max"],
+            v_boundary["v_edge_amp_fraction_max"],
+        )
+    )
+    diag["box_truncation_suspect_p"] = bool(float(p_boundary["p_edge_amp_fraction_max"]) > float(cfg["edge_amp_threshold"]))
+    diag["box_truncation_suspect_any_field"] = bool(
+        float(diag["max_field_edge_amp_fraction"]) > float(cfg["edge_amp_threshold"])
+    )
+    diag.update(
+        run_box_robustness_audit(
+            alpha=float(alpha),
+            mach=float(mach),
+            cr=float(candidate["shooting_cr"]),
+            ci=float(candidate["shooting_ci"]),
+            ln_p_start_right=float(candidate["ln_p_start_right"]),
+            cfg=cfg,
+            base_fields=fields,
+        )
+    )
+    return fields, diag
+
+
+def select_best_candidate_with_box_audit(
+    *,
+    alpha: float,
+    mach: float,
+    candidate_rows: list[dict[str, object]],
+    cfg: dict[str, object],
+) -> tuple[dict[str, object], dict[str, np.ndarray], dict[str, object], str, bool, dict[str, object]]:
+    ranked = rank_candidate_rows(candidate_rows)
+    if not ranked:
+        raise RuntimeError(f"Aucun candidat produit pour alpha={alpha:.3f}, Mach={mach:.3f}.")
+
+    validated_ranked = [(rank, row) for rank, row in enumerate(ranked) if str(row["status"]) == "validated"]
+    max_box_candidates = int(cfg.get("box_selection_max_candidates", 12))
+    if max_box_candidates > 0:
+        validated_ranked = validated_ranked[:max_box_candidates]
+    candidates_to_audit = validated_ranked if validated_ranked else [(0, ranked[0])]
+    first_evaluated: tuple[dict[str, object], dict[str, np.ndarray], dict[str, object], str, bool, int] | None = None
+    tested_count = 0
+    rejected_count = 0
+
+    for rank, candidate in candidates_to_audit:
+        fields, diag = reconstruct_candidate_fields_and_diagnostics(
+            alpha=float(alpha),
+            mach=float(mach),
+            candidate=candidate,
+            cfg=cfg,
+        )
+        final_status, box_rejection_applied = apply_box_rejection(str(candidate["status"]), diag)
+        tested_count += 1
+        if box_rejection_applied:
+            rejected_count += 1
+        evaluated = (candidate, fields, diag, final_status, box_rejection_applied, rank)
+        if first_evaluated is None:
+            first_evaluated = evaluated
+        if str(final_status) == "validated":
+            selection_diag = {
+                "box_selection_tested_candidates": int(tested_count),
+                "box_selection_rejected_candidates": int(rejected_count),
+                "box_selected_rank": int(rank),
+                "box_selection_max_candidates": int(max_box_candidates),
+                "box_selection_note": "selected_box_robust_candidate",
+            }
+            return candidate, fields, diag, final_status, box_rejection_applied, selection_diag
+
+    assert first_evaluated is not None
+    candidate, fields, diag, final_status, box_rejection_applied, rank = first_evaluated
+    selection_diag = {
+        "box_selection_tested_candidates": int(tested_count),
+        "box_selection_rejected_candidates": int(rejected_count),
+        "box_selected_rank": int(rank),
+        "box_selection_max_candidates": int(max_box_candidates),
+        "box_selection_note": "no_box_robust_validated_candidate" if validated_ranked else "no_raw_validated_candidate",
+    }
+    return candidate, fields, diag, final_status, box_rejection_applied, selection_diag
+
+
 def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[dict[str, object], list[dict[str, object]], list[dict[str, object]]]:
     alpha, mach = point
     cr_points = load_digitized_long(Path(str(cfg["cr_points"])))
@@ -545,68 +682,12 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
                         }
                     )
 
-        ranked = sorted(
-            candidate_rows,
-            key=lambda row: (
-                0 if bool(row["success"]) else 1,
-                float(row["selection_metric"]),
-                float(row["stage1_mismatch"] + row["stage2_mismatch"]),
-            ),
-        )
-        best = ranked[0]
-        fields = reconstruct_shooting_fields(
+        best, fields, diag, final_status, box_rejection_applied, box_selection_diag = select_best_candidate_with_box_audit(
             alpha=float(alpha),
             mach=float(mach),
-            cr=float(best["shooting_cr"]),
-            ci=float(best["shooting_ci"]),
-            ln_p_start_right=float(best["ln_p_start_right"]),
-            match_y=float(cfg["match_y"]),
-            use_mapping=bool(cfg["use_mapping"]),
-            mapping_scale=float(cfg["mapping_scale"]),
-            min_y_limit=float(cfg["min_y_limit"]),
-            max_y_limit=float(cfg["max_y_limit"]),
-            y_limit_factor=float(cfg["y_limit_factor"]),
+            candidate_rows=candidate_rows,
+            cfg=cfg,
         )
-        y_fields = np.asarray(fields["y"], dtype=float)
-        p_fields = np.asarray(fields["p"], dtype=np.complex128)
-        rho_fields = np.asarray(fields["rho"], dtype=np.complex128)
-        u_fields = np.asarray(fields["u"], dtype=np.complex128)
-        v_fields = np.asarray(fields["v"], dtype=np.complex128)
-        diag = extended_profile_diagnostics(y_fields, p_fields)
-        p_boundary = boundary_amplitude_metrics(p_fields, prefix="p")
-        rho_boundary = boundary_amplitude_metrics(rho_fields, prefix="rho")
-        u_boundary = boundary_amplitude_metrics(u_fields, prefix="u")
-        v_boundary = boundary_amplitude_metrics(v_fields, prefix="v")
-        diag.update(p_boundary)
-        diag.update(rho_boundary)
-        diag.update(u_boundary)
-        diag.update(v_boundary)
-        diag.update(infer_regimes(mach=float(mach), cr=float(best["shooting_cr"]), ci=float(best["shooting_ci"])))
-        diag["edge_amp_fraction_max"] = float(p_boundary["p_edge_amp_fraction_max"])
-        diag["left_boundary_amp_fraction"] = float(p_boundary["p_left_boundary_amp_fraction"])
-        diag["right_boundary_amp_fraction"] = float(p_boundary["p_right_boundary_amp_fraction"])
-        diag["max_field_edge_amp_fraction"] = float(
-            max(
-                p_boundary["p_edge_amp_fraction_max"],
-                rho_boundary["rho_edge_amp_fraction_max"],
-                u_boundary["u_edge_amp_fraction_max"],
-                v_boundary["v_edge_amp_fraction_max"],
-            )
-        )
-        diag["box_truncation_suspect_p"] = bool(float(p_boundary["p_edge_amp_fraction_max"]) > float(cfg["edge_amp_threshold"]))
-        diag["box_truncation_suspect_any_field"] = bool(float(diag["max_field_edge_amp_fraction"]) > float(cfg["edge_amp_threshold"]))
-        diag.update(
-            run_box_robustness_audit(
-                alpha=float(alpha),
-                mach=float(mach),
-                cr=float(best["shooting_cr"]),
-                ci=float(best["shooting_ci"]),
-                ln_p_start_right=float(best["ln_p_start_right"]),
-                cfg=cfg,
-                base_fields=fields,
-            )
-        )
-        final_status, box_rejection_applied = apply_box_rejection(str(best["status"]), diag)
 
         summary_row = {
             "alpha": float(alpha),
@@ -643,6 +724,7 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "best_used_cr_half_window": float(best["used_cr_half_window"]),
             "best_used_ci_half_window": float(best["used_ci_half_window"]),
             "best_y_limit": float(best["y_limit"]),
+            **box_selection_diag,
             **diag,
             "exception": "",
         }
@@ -737,6 +819,11 @@ def evaluate_point(point: tuple[float, float], cfg: dict[str, object]) -> tuple[
             "left_relative_regime": "",
             "right_relative_mach": np.nan,
             "right_relative_regime": "",
+            "box_selection_tested_candidates": 0,
+            "box_selection_rejected_candidates": 0,
+            "box_selected_rank": np.nan,
+            "box_selection_max_candidates": int(cfg.get("box_selection_max_candidates", 12)),
+            "box_selection_note": "exception",
             **default_box_robustness_metrics(
                 sorted(
                     {
@@ -899,6 +986,7 @@ def main() -> None:
         "box_robustness_max_peak_shift": float(args.box_robustness_max_peak_shift),
         "box_robustness_max_center8_delta": float(args.box_robustness_max_center8_delta),
         "box_robustness_max_edge_growth": float(args.box_robustness_max_edge_growth),
+        "box_selection_max_candidates": int(args.box_selection_max_candidates),
         "cr_points": str(args.cr_points),
         "ci_points": str(args.ci_points),
     }
@@ -916,7 +1004,8 @@ def main() -> None:
         f"relL2<={float(args.box_robustness_max_rel_l2):.3f} "
         f"peak<={float(args.box_robustness_max_peak_shift):.3f} "
         f"center8<={float(args.box_robustness_max_center8_delta):.3f} "
-        f"edge_growth<={float(args.box_robustness_max_edge_growth):.3f}"
+        f"edge_growth<={float(args.box_robustness_max_edge_growth):.3f} "
+        f"selection_max={int(args.box_selection_max_candidates)}"
     )
 
     summary_rows: list[dict[str, object]] = []
