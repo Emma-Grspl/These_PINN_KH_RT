@@ -85,10 +85,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--candidate-source",
         type=str,
-        choices=["auto", "existing", "blumen_perturb", "branch_guided", "all"],
+        choices=["auto", "existing", "blumen_perturb", "branch_guided", "all", "manual_grid"],
         default="auto",
     )
     parser.add_argument("--max-candidates-per-point", type=int, default=12)
+    parser.add_argument("--manual-seed-grid", default="", help="Manual seed list as cr:ci pairs separated by spaces or commas, e.g. 0.36:0.024 0.40:0.028.")
     parser.add_argument("--stop-after-accepted", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--flush-every-candidate", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--append-validated", action=argparse.BooleanOptionalAction, default=False)
@@ -529,6 +530,61 @@ def interleave_seed_buckets(
             return selected
 
 
+
+def build_manual_grid_seed_records(
+    *,
+    alpha: float,
+    mach: float,
+    blumen_cr: float,
+    blumen_ci: float,
+    args: argparse.Namespace,
+) -> list[dict[str, object]]:
+    """Build explicit manual seeds from args.manual_seed_grid.
+
+    Format: "cr:ci cr:ci ..." or "cr:ci,cr:ci,...".
+    These are search seeds only; they are not validated references.
+    """
+    raw = str(getattr(args, "manual_seed_grid", "") or "").strip()
+    if not raw:
+        return []
+
+    tokens = raw.replace(",", " ").split()
+    records: list[dict[str, object]] = []
+
+    for idx, token in enumerate(tokens, start=1):
+        if ":" not in token:
+            raise ValueError(
+                f"Invalid manual seed token {token!r}; expected cr:ci, for example 0.38:0.024"
+            )
+        cr_s, ci_s = token.split(":", 1)
+        cr = float(cr_s)
+        ci = float(ci_s)
+        if not np.isfinite(cr) or not np.isfinite(ci) or ci <= 0.0:
+            continue
+
+        records.append(
+            {
+                "candidate_bucket": "manual_grid",
+                "candidate_source": "manual_grid",
+                "candidate_label": f"manual_cr{cr:.6f}_ci{ci:.6f}",
+                "source_file": "manual_seed_grid",
+                "source_mach": float(mach),
+                "source_alpha": float(alpha),
+                "cr_init": float(cr),
+                "ci_init": float(ci),
+                "priority_score": seed_distance_score(
+                    cr=float(cr),
+                    ci=float(ci),
+                    target_cr=float(blumen_cr),
+                    target_ci=float(blumen_ci),
+                    ci_only_target=float(blumen_ci) if np.isfinite(blumen_ci) else None,
+                ) - 100.0 + 1.0e-6 * float(idx),
+            }
+        )
+
+    return records
+
+
 def collect_candidate_records(
     *,
     alpha: float,
@@ -546,6 +602,15 @@ def collect_candidate_records(
         "blumen_ci_available": bool(np.isfinite(blumen_ci)),
         "blumen_cr_available": bool(np.isfinite(blumen_cr)),
     }
+
+    manual_records = build_manual_grid_seed_records(
+        alpha=float(alpha),
+        mach=float(mach),
+        blumen_cr=float(blumen_cr),
+        blumen_ci=float(blumen_ci),
+        args=args,
+    )
+    notes["manual_grid_candidates_found"] = int(len(manual_records))
 
     existing_records = build_existing_seed_records(
         alpha=float(alpha),
@@ -584,6 +649,7 @@ def collect_candidate_records(
     notes["blumen_perturb_candidates_found"] = int(len(blumen_records))
 
     source_to_records = {
+        "manual_grid": manual_records,
         "existing": existing_records,
         "branch_guided": branch_records,
         "blumen_perturb": blumen_records,
@@ -595,11 +661,11 @@ def collect_candidate_records(
     elif args.candidate_source == "blumen_perturb":
         selected = blumen_records
     elif args.candidate_source == "all":
-        selected = existing_records + branch_records + blumen_records
+        selected = manual_records + existing_records + branch_records + blumen_records
     else:
         deduped = interleave_seed_buckets(
             source_to_records,
-            order=["existing", "branch_guided", "blumen_perturb"],
+            order=["manual_grid", "existing", "branch_guided", "blumen_perturb"],
             max_candidates=int(args.max_candidates_per_point),
         )
         for idx, row in enumerate(deduped, start=1):
